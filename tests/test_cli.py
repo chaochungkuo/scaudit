@@ -89,6 +89,8 @@ class CliTests(unittest.TestCase):
             self.assertTrue((output_dir / "annotation_cards.json").exists())
             self.assertTrue((output_dir / "review_table.csv").exists())
             self.assertTrue((output_dir / "report" / "index.html").exists())
+            self.assertTrue((output_dir / "report" / "annotation.html").exists())
+            self.assertTrue((output_dir / "report" / "clusters" / "index.html").exists())
 
     def test_finalize_command_writes_final_skeleton(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

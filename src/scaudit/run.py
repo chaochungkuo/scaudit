@@ -12,6 +12,7 @@ from typing import Any
 from scaudit import __version__
 from scaudit.config import load_config
 from scaudit.data import diagnose_dataset
+from scaudit.report import render_draft_report, render_final_report
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,7 @@ def prepare_run(config_path: Path) -> RunOutputs:
     _write_annotation_summary(outputs.annotation_summary)
     _write_review_table(outputs.review_table)
     _write_json(outputs.reproducibility, _reproducibility_payload(config))
-    _write_report_placeholder(outputs.report_index)
+    render_draft_report(report_dir, outputs.diagnosis, outputs.annotation_cards)
     return outputs
 
 
@@ -106,7 +107,7 @@ def finalize_run(run_dir: Path, output_dir: Path) -> FinalOutputs:
         )
         + "\n",
     )
-    _write_final_report_placeholder(outputs.report_index)
+    render_final_report(report_dir)
     return outputs
 
 
@@ -159,44 +160,3 @@ def _write_review_table(path: Path) -> None:
 def _write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-
-def _write_report_placeholder(path: Path) -> None:
-    path.write_text(
-        """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>scaudit report</title>
-</head>
-<body>
-  <main>
-    <h1>scaudit annotation audit</h1>
-    <p>This placeholder report confirms that the run output structure was created.</p>
-    <p>Marker evidence and cluster pages will be generated in the next implementation phases.</p>
-  </main>
-</body>
-</html>
-""",
-        encoding="utf-8",
-    )
-
-
-def _write_final_report_placeholder(path: Path) -> None:
-    path.write_text(
-        """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>scaudit final report</title>
-</head>
-<body>
-  <main>
-    <h1>scaudit final annotation audit</h1>
-    <p>This placeholder report confirms that final outputs were created.</p>
-    <p>Review import and final annotation writing will be implemented in later milestones.</p>
-  </main>
-</body>
-</html>
-""",
-        encoding="utf-8",
-    )
