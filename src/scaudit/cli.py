@@ -10,7 +10,7 @@ from typing import Sequence
 from scaudit import __version__
 from scaudit.config import build_plan, has_errors, validate_config, write_default_config
 from scaudit.rendering import print_bullets, print_status_table
-from scaudit.run import prepare_run
+from scaudit.run import finalize_run, prepare_run
 
 
 @dataclass(frozen=True)
@@ -196,6 +196,38 @@ def run(args: Sequence[str]) -> None:
     print("  Implement marker evidence in the next milestone")
 
 
+def finalize(args: Sequence[str]) -> None:
+    if not args:
+        print("ERROR: run directory is required", file=sys.stderr)
+        raise SystemExit(2)
+    run_dir = Path(args[0])
+    output_dir = Path("final")
+
+    index = 1
+    while index < len(args):
+        token = args[index]
+        if token == "--out" and index + 1 < len(args):
+            output_dir = Path(args[index + 1])
+            index += 2
+        else:
+            print(f"Unknown option for finalize: {token}", file=sys.stderr)
+            raise SystemExit(2)
+
+    try:
+        outputs = finalize_run(run_dir, output_dir)
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    print("Final annotation audit skeleton complete")
+    print()
+    print("Outputs:")
+    print(f"  Report: {outputs.report_index}")
+    print(f"  Final annotation cards: {outputs.annotation_cards}")
+    print(f"  Final summary: {outputs.annotation_summary}")
+    print(f"  Review audit: {outputs.review_audit}")
+
+
 def _print_help() -> None:
     print("scaudit")
     print()
@@ -207,9 +239,11 @@ def _print_help() -> None:
     print("  scaudit validate config.toml")
     print("  scaudit plan config.toml")
     print("  scaudit run config.toml")
+    print("  scaudit finalize results/ --out final/")
     print()
     print("Commands:")
     print("  doctor       Show environment capability checks")
+    print("  finalize     Freeze a draft run into final output skeleton")
     print("  init-config  Create a starter config.toml")
     print("  plan         Preview the run plan")
     print("  run          Create draft audit output skeleton")
@@ -237,6 +271,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     if command == "run":
         run(args[1:])
+        return
+    if command == "finalize":
+        finalize(args[1:])
         return
     if command in {"version", "--version", "-V"}:
         version()

@@ -25,6 +25,16 @@ class RunOutputs:
     report_index: Path
 
 
+@dataclass(frozen=True)
+class FinalOutputs:
+    output_dir: Path
+    annotation_cards: Path
+    annotation_summary: Path
+    review_audit: Path
+    reproducibility: Path
+    report_index: Path
+
+
 def prepare_run(config_path: Path) -> RunOutputs:
     config = load_config(config_path)
     output_dir = Path(str(config.get("output", {}).get("dir", "results")))
@@ -50,6 +60,49 @@ def prepare_run(config_path: Path) -> RunOutputs:
     _write_json(outputs.reproducibility, _reproducibility_payload(config))
     _write_report_placeholder(outputs.report_index)
     return outputs
+
+
+def finalize_run(run_dir: Path, output_dir: Path) -> FinalOutputs:
+    if not run_dir.exists():
+        raise FileNotFoundError(f"run directory not found: {run_dir}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report_dir = output_dir / "report"
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    outputs = FinalOutputs(
+        output_dir=output_dir,
+        annotation_cards=output_dir / "final_annotation_cards.json",
+        annotation_summary=output_dir / "final_annotation_summary.csv",
+        review_audit=output_dir / "review_audit.json",
+        reproducibility=output_dir / "reproducibility.json",
+        report_index=report_dir / "index.html",
+    )
+
+    _copy_or_default(run_dir / "annotation_cards.json", outputs.annotation_cards, "[]\n")
+    _copy_or_default(
+        run_dir / "annotation_summary.csv",
+        outputs.annotation_summary,
+        "cluster_id,proposed_label,decision,confidence,review_priority\n",
+    )
+    _copy_or_default(run_dir / "reproducibility.json", outputs.reproducibility, "{}\n")
+    _write_json(
+        outputs.review_audit,
+        {
+            "run_dir": str(run_dir),
+            "status": "placeholder",
+            "warnings": ["Review import is not implemented yet; draft labels were finalized as-is."],
+        },
+    )
+    _write_final_report_placeholder(outputs.report_index)
+    return outputs
+
+
+def _copy_or_default(source: Path, destination: Path, default_text: str) -> None:
+    if source.exists():
+        shutil.copyfile(source, destination)
+    else:
+        destination.write_text(default_text, encoding="utf-8")
 
 
 def _diagnosis_payload(config: dict[str, Any]) -> dict[str, Any]:
@@ -124,6 +177,27 @@ def _write_report_placeholder(path: Path) -> None:
     <h1>scaudit annotation audit</h1>
     <p>This placeholder report confirms that the run output structure was created.</p>
     <p>Marker evidence and cluster pages will be generated in the next implementation phases.</p>
+  </main>
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_final_report_placeholder(path: Path) -> None:
+    path.write_text(
+        """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>scaudit final report</title>
+</head>
+<body>
+  <main>
+    <h1>scaudit final annotation audit</h1>
+    <p>This placeholder report confirms that final outputs were created.</p>
+    <p>Review import and final annotation writing will be implemented in later milestones.</p>
   </main>
 </body>
 </html>

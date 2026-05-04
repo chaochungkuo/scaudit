@@ -81,6 +81,28 @@ class CliTests(unittest.TestCase):
             self.assertTrue((output_dir / "review_table.csv").exists())
             self.assertTrue((output_dir / "report" / "index.html").exists())
 
+    def test_finalize_command_writes_final_skeleton(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            config_path = temp_path / "config.toml"
+            with redirect_stdout(io.StringIO()):
+                main(["init-config", "input.h5ad", "--out", str(config_path)])
+            text = config_path.read_text(encoding="utf-8")
+            text = text.replace('dir = "results"', f'dir = "{temp_path / "results"}"')
+            config_path.write_text(text, encoding="utf-8")
+
+            with redirect_stdout(io.StringIO()):
+                main(["run", str(config_path)])
+
+            final_dir = temp_path / "final"
+            with redirect_stdout(io.StringIO()):
+                main(["finalize", str(temp_path / "results"), "--out", str(final_dir)])
+
+            self.assertTrue((final_dir / "final_annotation_cards.json").exists())
+            self.assertTrue((final_dir / "final_annotation_summary.csv").exists())
+            self.assertTrue((final_dir / "review_audit.json").exists())
+            self.assertTrue((final_dir / "report" / "index.html").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
