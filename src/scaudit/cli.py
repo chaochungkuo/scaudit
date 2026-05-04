@@ -9,6 +9,7 @@ from typing import Sequence
 
 from scaudit import __version__
 from scaudit.config import build_plan, has_errors, validate_config, write_default_config
+from scaudit.references import add_reference, load_registry, use_reference
 from scaudit.rendering import print_bullets, print_status_table
 from scaudit.review import import_review_table
 from scaudit.run import finalize_run, prepare_run
@@ -272,6 +273,102 @@ def review(args: Sequence[str]) -> None:
     print(f"  scaudit finalize {result.run_dir} --out final/")
 
 
+def reference(args: Sequence[str]) -> None:
+    if not args:
+        print("ERROR: reference subcommand is required", file=sys.stderr)
+        raise SystemExit(2)
+    subcommand = args[0]
+    if subcommand == "list":
+        registry = load_registry()
+        if not registry:
+            print("No references registered.")
+            return
+        print_status_table(
+            "References",
+            [(item["id"], item.get("status", "unknown"), item.get("data_path", "")) for item in registry.values()],
+        )
+        return
+    if subcommand == "use":
+        if len(args) < 2:
+            print("ERROR: reference id is required", file=sys.stderr)
+            raise SystemExit(2)
+        reference_id = args[1]
+        config_path = Path("config.toml")
+        index = 2
+        while index < len(args):
+            token = args[index]
+            if token == "--config" and index + 1 < len(args):
+                config_path = Path(args[index + 1])
+                index += 2
+            else:
+                print(f"Unknown option for reference use: {token}", file=sys.stderr)
+                raise SystemExit(2)
+        use_reference(config_path, reference_id)
+        print(f"Updated {config_path}: selected {reference_id}")
+        return
+    if subcommand == "add":
+        _reference_add(args[1:])
+        return
+    print(f"Unknown reference subcommand: {subcommand}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def _reference_add(args: Sequence[str]) -> None:
+    if not args:
+        print("ERROR: reference file path is required", file=sys.stderr)
+        raise SystemExit(2)
+    source_path = Path(args[0])
+    options = {
+        "id": "",
+        "species": "",
+        "tissue": "",
+        "condition": "",
+        "technology": "",
+        "label_key": "",
+        "version": "custom",
+        "source": "local",
+        "gene_id_type": "symbol",
+    }
+    index = 1
+    while index < len(args):
+        token = args[index]
+        value_keys = {
+            "--id": "id",
+            "--species": "species",
+            "--tissue": "tissue",
+            "--condition": "condition",
+            "--technology": "technology",
+            "--label-key": "label_key",
+            "--version": "version",
+            "--source": "source",
+            "--gene-id-type": "gene_id_type",
+        }
+        if token in value_keys and index + 1 < len(args):
+            options[value_keys[token]] = args[index + 1]
+            index += 2
+        else:
+            print(f"Unknown option for reference add: {token}", file=sys.stderr)
+            raise SystemExit(2)
+    try:
+        manifest = add_reference(
+            source_path,
+            reference_id=options["id"],
+            species=options["species"],
+            tissue=options["tissue"],
+            condition=options["condition"],
+            technology=options["technology"],
+            label_key=options["label_key"],
+            version=options["version"],
+            source=options["source"],
+            gene_id_type=options["gene_id_type"],
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(f"Registered reference: {manifest.id}")
+    print(f"Path: {manifest.path}")
+
+
 def _print_help() -> None:
     print("scaudit")
     print()
@@ -284,6 +381,9 @@ def _print_help() -> None:
     print("  scaudit plan config.toml")
     print("  scaudit run config.toml")
     print("  scaudit review import results/review_table.csv --run results/")
+    print("  scaudit reference add my_ref.h5ad --id my_ref --species mouse --tissue heart --label-key cell_type")
+    print("  scaudit reference list")
+    print("  scaudit reference use my_ref --config config.toml")
     print("  scaudit finalize results/ --out final/")
     print()
     print("Commands:")
@@ -291,6 +391,7 @@ def _print_help() -> None:
     print("  finalize     Freeze a draft run into final output skeleton")
     print("  init-config  Create a starter config.toml")
     print("  plan         Preview the run plan")
+    print("  reference    Manage local reference registry")
     print("  review       Import human review tables")
     print("  run          Create draft audit output skeleton")
     print("  validate     Validate config.toml")
@@ -323,6 +424,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     if command == "review":
         review(args[1:])
+        return
+    if command == "reference":
+        reference(args[1:])
         return
     if command in {"version", "--version", "-V"}:
         version()

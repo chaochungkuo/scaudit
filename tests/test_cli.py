@@ -126,6 +126,48 @@ class CliTests(unittest.TestCase):
             self.assertTrue((temp_path / "results" / "reviewed_review_table.csv").exists())
             self.assertTrue((temp_path / "results" / "review_audit.json").exists())
 
+    def test_reference_add_and_use(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            config_path = temp_path / "config.toml"
+            ref_path = temp_path / "ref.h5ad"
+            ref_path.write_text("placeholder", encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                main(["init-config", "input.h5ad", "--out", str(config_path)])
+
+            old_cwd = Path.cwd()
+            try:
+                import os
+
+                os.chdir(temp_path)
+                with redirect_stdout(io.StringIO()):
+                    main(
+                        [
+                            "reference",
+                            "add",
+                            str(ref_path),
+                            "--id",
+                            "my_ref",
+                            "--species",
+                            "mouse",
+                            "--tissue",
+                            "heart",
+                            "--label-key",
+                            "cell_type",
+                        ]
+                    )
+                with redirect_stdout(io.StringIO()):
+                    main(["reference", "use", "my_ref", "--config", str(config_path)])
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    main(["reference", "list"])
+            finally:
+                os.chdir(old_cwd)
+
+            self.assertTrue((temp_path / "references" / "registry.json").exists())
+            self.assertIn('selected = ["my_ref"]', config_path.read_text(encoding="utf-8"))
+            self.assertIn("my_ref", output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
