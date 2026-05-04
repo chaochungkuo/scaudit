@@ -10,6 +10,7 @@ from typing import Sequence
 from scaudit import __version__
 from scaudit.config import build_plan, has_errors, validate_config, write_default_config
 from scaudit.rendering import print_bullets, print_status_table
+from scaudit.run import prepare_run
 
 
 @dataclass(frozen=True)
@@ -163,6 +164,38 @@ def plan(args: Sequence[str]) -> None:
     print_bullets("Stages", run_plan.stages)
 
 
+def run(args: Sequence[str]) -> None:
+    if not args:
+        print("ERROR: config path is required", file=sys.stderr)
+        raise SystemExit(2)
+    config_path = Path(args[0])
+    items = validate_config(config_path)
+    print_status_table("Config validation", [(item.section, item.status, item.notes) for item in items])
+    if has_errors(items):
+        raise SystemExit(1)
+
+    print()
+    print("Running scaudit annotation audit")
+    print("[1/4] Validating config      OK")
+    print("[2/4] Preparing outputs      RUNNING")
+    outputs = prepare_run(config_path)
+    print("[2/4] Preparing outputs      OK")
+    print("[3/4] Writing placeholders   OK")
+    print("[4/4] Final summary          OK")
+    print()
+    print("Draft annotation audit skeleton complete")
+    print()
+    print("Outputs:")
+    print(f"  Report: {outputs.report_index}")
+    print(f"  Annotation cards: {outputs.annotation_cards}")
+    print(f"  Review table: {outputs.review_table}")
+    print(f"  Reproducibility: {outputs.reproducibility}")
+    print()
+    print("Next:")
+    print(f"  Open {outputs.report_index}")
+    print("  Implement marker evidence in the next milestone")
+
+
 def _print_help() -> None:
     print("scaudit")
     print()
@@ -173,11 +206,13 @@ def _print_help() -> None:
     print("  scaudit init-config input.h5ad --format toml --out config.toml")
     print("  scaudit validate config.toml")
     print("  scaudit plan config.toml")
+    print("  scaudit run config.toml")
     print()
     print("Commands:")
     print("  doctor       Show environment capability checks")
     print("  init-config  Create a starter config.toml")
     print("  plan         Preview the run plan")
+    print("  run          Create draft audit output skeleton")
     print("  validate     Validate config.toml")
     print("  version      Show scaudit version")
 
@@ -199,6 +234,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     if command == "plan":
         plan(args[1:])
+        return
+    if command == "run":
+        run(args[1:])
         return
     if command in {"version", "--version", "-V"}:
         version()
