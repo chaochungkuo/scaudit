@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaudit.local/schemas/review_table.schema.json",
+  "title": "scaudit review table row",
+  "type": "object",
+  "required": ["cluster_id", "proposed_label", "decision", "confidence", "review_status", "reviewed_label", "reviewer_note"],
+  "properties": {
+    "cluster_id": { "type": "string" },
+    "proposed_label": { "type": "string" },
+    "decision": { "type": "string" },
+    "confidence": { "type": "string" },
+    "review_status": { "type": "string" },
+    "reviewed_label": { "type": "string" },
+    "reviewer_note": { "type": "string" }
+  }
+}

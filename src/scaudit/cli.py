@@ -4,9 +4,12 @@ import importlib.util
 import platform
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Sequence
 
 from scaudit import __version__
+from scaudit.config import build_plan, has_errors, validate_config, write_default_config
+from scaudit.rendering import print_bullets, print_status_table
 
 
 @dataclass(frozen=True)
@@ -94,6 +97,72 @@ def version() -> None:
     print(f"scaudit {__version__}")
 
 
+def init_config(args: Sequence[str]) -> None:
+    if not args:
+        print("ERROR: input .h5ad path is required", file=sys.stderr)
+        raise SystemExit(2)
+    dataset_path = args[0]
+    output_path = Path("config.toml")
+    config_format = "toml"
+
+    index = 1
+    while index < len(args):
+        token = args[index]
+        if token == "--out" and index + 1 < len(args):
+            output_path = Path(args[index + 1])
+            index += 2
+        elif token == "--format" and index + 1 < len(args):
+            config_format = args[index + 1]
+            index += 2
+        else:
+            print(f"Unknown option for init-config: {token}", file=sys.stderr)
+            raise SystemExit(2)
+
+    if config_format != "toml":
+        print("ERROR: only --format toml is currently supported", file=sys.stderr)
+        raise SystemExit(2)
+
+    write_default_config(dataset_path, output_path)
+    print(f"Created {output_path}")
+    print()
+    print("Next:")
+    print(f"  scaudit validate {output_path}")
+    print(f"  scaudit plan {output_path}")
+
+
+def validate(args: Sequence[str]) -> None:
+    if not args:
+        print("ERROR: config path is required", file=sys.stderr)
+        raise SystemExit(2)
+    config_path = Path(args[0])
+    items = validate_config(config_path)
+    print_status_table("Config validation", [(item.section, item.status, item.notes) for item in items])
+    if has_errors(items):
+        raise SystemExit(1)
+
+
+def plan(args: Sequence[str]) -> None:
+    if not args:
+        print("ERROR: config path is required", file=sys.stderr)
+        raise SystemExit(2)
+    config_path = Path(args[0])
+    items = validate_config(config_path)
+    print_status_table("Config validation", [(item.section, item.status, item.notes) for item in items])
+    if has_errors(items):
+        raise SystemExit(1)
+
+    run_plan = build_plan(config_path)
+    print()
+    print(f"Dataset: {run_plan.dataset_path or '(not configured)'}")
+    print(f"Output: {run_plan.output_dir}")
+    print()
+    print_status_table("Methods", [(item.section, item.status, item.notes) for item in run_plan.methods])
+    print()
+    print_bullets("Outputs", run_plan.outputs)
+    print()
+    print_bullets("Stages", run_plan.stages)
+
+
 def _print_help() -> None:
     print("scaudit")
     print()
@@ -101,10 +170,16 @@ def _print_help() -> None:
     print("  scaudit --help")
     print("  scaudit version")
     print("  scaudit doctor")
+    print("  scaudit init-config input.h5ad --format toml --out config.toml")
+    print("  scaudit validate config.toml")
+    print("  scaudit plan config.toml")
     print()
     print("Commands:")
-    print("  doctor   Show environment capability checks")
-    print("  version  Show scaudit version")
+    print("  doctor       Show environment capability checks")
+    print("  init-config  Create a starter config.toml")
+    print("  plan         Preview the run plan")
+    print("  validate     Validate config.toml")
+    print("  version      Show scaudit version")
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -115,6 +190,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     command = args[0]
     if command == "doctor":
         doctor()
+        return
+    if command == "init-config":
+        init_config(args[1:])
+        return
+    if command == "validate":
+        validate(args[1:])
+        return
+    if command == "plan":
+        plan(args[1:])
         return
     if command in {"version", "--version", "-V"}:
         version()

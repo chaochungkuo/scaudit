@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaudit.local/schemas/reproducibility.schema.json",
+  "title": "scaudit reproducibility record",
+  "type": "object",
+  "required": ["scaudit_version", "input_file", "parameters", "references", "models", "environment"],
+  "properties": {
+    "scaudit_version": { "type": ["string", "null"] },
+    "input_file": { "type": "string" },
+    "input_hash": { "type": ["string", "null"] },
+    "parameters": { "type": "object" },
+    "references": { "type": "array" },
+    "models": { "type": "array" },
+    "environment": { "type": "object" },
+    "created_at": { "type": ["string", "null"] }
+  }
+}

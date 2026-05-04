@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaudit.local/schemas/reference_manifest.schema.json",
+  "title": "scaudit reference manifest",
+  "type": "object",
+  "required": ["id", "version", "source", "species", "tissue", "path", "label_key", "gene_id_type"],
+  "properties": {
+    "id": { "type": "string" },
+    "version": { "type": "string" },
+    "source": { "type": "string" },
+    "species": { "type": "string" },
+    "tissue": { "type": "string" },
+    "condition": { "type": "string" },
+    "technology": { "type": "string" },
+    "path": { "type": "string" },
+    "label_key": { "type": "string" },
+    "gene_id_type": { "type": "string" },
+    "downloaded_at": { "type": ["string", "null"] },
+    "checksum": { "type": ["string", "null"] }
+  }
+}

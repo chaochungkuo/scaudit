@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaudit.local/schemas/annotation_card.schema.json",
+  "title": "scaudit annotation card",
+  "type": "object",
+  "required": ["cluster_id", "proposed_label", "decision", "confidence", "evidence", "uncertainty", "reasoning", "provenance"],
+  "properties": {
+    "cluster_id": { "type": "string" },
+    "proposed_label": { "type": ["string", "null"] },
+    "decision": {
+      "type": "string",
+      "enum": ["Accepted", "Ambiguous", "Unknown", "Needs review", "Artifact warning"]
+    },
+    "confidence": {
+      "type": "object",
+      "required": ["lineage", "subtype", "overall"],
+      "properties": {
+        "lineage": { "$ref": "#/$defs/confidence" },
+        "subtype": { "$ref": "#/$defs/confidence" },
+        "overall": { "$ref": "#/$defs/confidence" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["markers", "models", "references", "ontology", "qc_warnings"],
+      "properties": {
+        "markers": { "type": "array" },
+        "models": { "type": "array" },
+        "references": { "type": "array" },
+        "ontology": { "type": "array" },
+        "qc_warnings": { "type": "array" }
+      }
+    },
+    "uncertainty": { "type": "object" },
+    "reasoning": { "type": "object" },
+    "provenance": { "type": "object" }
+  },
+  "$defs": {
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low", "unknown"]
+    }
+  }
+}

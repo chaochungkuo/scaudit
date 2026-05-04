@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaudit.local/schemas/config.schema.json",
+  "title": "scaudit config",
+  "type": "object",
+  "required": ["dataset", "output"],
+  "properties": {
+    "dataset": {
+      "type": "object",
+      "required": ["path", "species", "tissue", "cluster_key"],
+      "properties": {
+        "path": { "type": "string" },
+        "species": { "type": "string" },
+        "tissue": { "type": "string" },
+        "cluster_key": { "type": "string" },
+        "sample_key": { "type": "string" },
+        "condition_key": { "type": "string" },
+        "batch_key": { "type": "string" }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["dir"],
+      "properties": {
+        "dir": { "type": "string" }
+      }
+    }
+  }
+}
