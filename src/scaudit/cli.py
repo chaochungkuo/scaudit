@@ -10,6 +10,7 @@ from typing import Sequence
 from scaudit import __version__
 from scaudit.config import build_plan, has_errors, validate_config, write_default_config
 from scaudit.rendering import print_bullets, print_status_table
+from scaudit.review import import_review_table
 from scaudit.run import finalize_run, prepare_run
 
 
@@ -228,6 +229,49 @@ def finalize(args: Sequence[str]) -> None:
     print(f"  Review audit: {outputs.review_audit}")
 
 
+def review(args: Sequence[str]) -> None:
+    if not args:
+        print("ERROR: review subcommand is required", file=sys.stderr)
+        raise SystemExit(2)
+    subcommand = args[0]
+    if subcommand != "import":
+        print(f"Unknown review subcommand: {subcommand}", file=sys.stderr)
+        raise SystemExit(2)
+    if len(args) < 2:
+        print("ERROR: review table path is required", file=sys.stderr)
+        raise SystemExit(2)
+
+    source = Path(args[1])
+    run_dir = Path("results")
+    index = 2
+    while index < len(args):
+        token = args[index]
+        if token == "--run" and index + 1 < len(args):
+            run_dir = Path(args[index + 1])
+            index += 2
+        else:
+            print(f"Unknown option for review import: {token}", file=sys.stderr)
+            raise SystemExit(2)
+
+    try:
+        result = import_review_table(source, run_dir)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    print("Review table imported")
+    print()
+    print(f"Rows: {result.row_count}")
+    print(f"Reviewed table: {result.reviewed_table}")
+    print(f"Review audit: {result.audit_path}")
+    if result.warnings:
+        print()
+        print_bullets("Warnings", result.warnings)
+    print()
+    print("Next:")
+    print(f"  scaudit finalize {result.run_dir} --out final/")
+
+
 def _print_help() -> None:
     print("scaudit")
     print()
@@ -239,6 +283,7 @@ def _print_help() -> None:
     print("  scaudit validate config.toml")
     print("  scaudit plan config.toml")
     print("  scaudit run config.toml")
+    print("  scaudit review import results/review_table.csv --run results/")
     print("  scaudit finalize results/ --out final/")
     print()
     print("Commands:")
@@ -246,6 +291,7 @@ def _print_help() -> None:
     print("  finalize     Freeze a draft run into final output skeleton")
     print("  init-config  Create a starter config.toml")
     print("  plan         Preview the run plan")
+    print("  review       Import human review tables")
     print("  run          Create draft audit output skeleton")
     print("  validate     Validate config.toml")
     print("  version      Show scaudit version")
@@ -274,6 +320,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     if command == "finalize":
         finalize(args[1:])
+        return
+    if command == "review":
+        review(args[1:])
         return
     if command in {"version", "--version", "-V"}:
         version()

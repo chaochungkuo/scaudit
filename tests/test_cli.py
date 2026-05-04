@@ -103,6 +103,29 @@ class CliTests(unittest.TestCase):
             self.assertTrue((final_dir / "review_audit.json").exists())
             self.assertTrue((final_dir / "report" / "index.html").exists())
 
+    def test_review_import_writes_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            config_path = temp_path / "config.toml"
+            with redirect_stdout(io.StringIO()):
+                main(["init-config", "input.h5ad", "--out", str(config_path)])
+            text = config_path.read_text(encoding="utf-8")
+            text = text.replace('dir = "results"', f'dir = "{temp_path / "results"}"')
+            config_path.write_text(text, encoding="utf-8")
+
+            with redirect_stdout(io.StringIO()):
+                main(["run", str(config_path)])
+
+            review_table = temp_path / "results" / "review_table.csv"
+            with review_table.open("a", encoding="utf-8") as handle:
+                handle.write("4,Cardiomyocyte,Accepted,high,accepted,Cardiomyocyte,\n")
+
+            with redirect_stdout(io.StringIO()):
+                main(["review", "import", str(review_table), "--run", str(temp_path / "results")])
+
+            self.assertTrue((temp_path / "results" / "reviewed_review_table.csv").exists())
+            self.assertTrue((temp_path / "results" / "review_audit.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

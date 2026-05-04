@@ -86,13 +86,19 @@ def finalize_run(run_dir: Path, output_dir: Path) -> FinalOutputs:
         "cluster_id,proposed_label,decision,confidence,review_priority\n",
     )
     _copy_or_default(run_dir / "reproducibility.json", outputs.reproducibility, "{}\n")
-    _write_json(
+    _copy_or_default(
+        run_dir / "review_audit.json",
         outputs.review_audit,
-        {
-            "run_dir": str(run_dir),
-            "status": "placeholder",
-            "warnings": ["Review import is not implemented yet; draft labels were finalized as-is."],
-        },
+        json.dumps(
+            {
+                "run_dir": str(run_dir),
+                "status": "not_imported",
+                "warnings": ["No imported review table was found; draft labels were finalized as-is."],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
     )
     _write_final_report_placeholder(outputs.report_index)
     return outputs
