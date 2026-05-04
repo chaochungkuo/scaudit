@@ -42,6 +42,15 @@ class CliTests(unittest.TestCase):
             self.assertEqual(config["dataset"]["path"], "input.h5ad")
             self.assertIn("validate", output.getvalue())
 
+    def test_diagnose_writes_json_for_placeholder_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            input_path = temp_path / "input.h5ad"
+            input_path.write_text("placeholder", encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                main(["diagnose", str(input_path), "--cluster-key", "leiden", "--out", str(temp_path / "results")])
+            self.assertTrue((temp_path / "results" / "diagnosis.json").exists())
+
     def test_validate_config_reports_missing_dataset_as_warning(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.toml"

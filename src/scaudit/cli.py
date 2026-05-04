@@ -9,6 +9,7 @@ from typing import Sequence
 
 from scaudit import __version__
 from scaudit.config import build_plan, has_errors, validate_config, write_default_config
+from scaudit.data import diagnose_dataset
 from scaudit.references import add_reference, load_registry, use_reference
 from scaudit.rendering import print_bullets, print_status_table
 from scaudit.review import import_review_table
@@ -98,6 +99,50 @@ def doctor() -> None:
 
 def version() -> None:
     print(f"scaudit {__version__}")
+
+
+def diagnose(args: Sequence[str]) -> None:
+    if not args:
+        print("ERROR: input .h5ad path is required", file=sys.stderr)
+        raise SystemExit(2)
+    dataset_path = Path(args[0])
+    output_dir = Path("results")
+    cluster_key = ""
+
+    index = 1
+    while index < len(args):
+        token = args[index]
+        if token == "--out" and index + 1 < len(args):
+            output_dir = Path(args[index + 1])
+            index += 2
+        elif token == "--cluster-key" and index + 1 < len(args):
+            cluster_key = args[index + 1]
+            index += 2
+        else:
+            print(f"Unknown option for diagnose: {token}", file=sys.stderr)
+            raise SystemExit(2)
+
+    diagnosis = diagnose_dataset(dataset_path, cluster_key=cluster_key)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    diagnosis_path = output_dir / "diagnosis.json"
+    import json
+
+    diagnosis_path.write_text(json.dumps(diagnosis.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print_status_table(
+        "Dataset diagnosis",
+        [
+            ("path", "OK" if diagnosis.file_exists else "ERROR", diagnosis.path),
+            ("readable", "OK" if diagnosis.readable else "WARN", str(diagnosis.readable)),
+            ("cells", "OK" if diagnosis.n_obs is not None else "SKIPPED", str(diagnosis.n_obs)),
+            ("genes", "OK" if diagnosis.n_vars is not None else "SKIPPED", str(diagnosis.n_vars)),
+            ("cluster_key", "OK" if diagnosis.cluster_count is not None else "WARN", diagnosis.cluster_key or "(not set)"),
+        ],
+    )
+    if diagnosis.warnings:
+        print()
+        print_bullets("Warnings", diagnosis.warnings)
+    print()
+    print(f"Wrote {diagnosis_path}")
 
 
 def init_config(args: Sequence[str]) -> None:
@@ -376,6 +421,7 @@ def _print_help() -> None:
     print("  scaudit --help")
     print("  scaudit version")
     print("  scaudit doctor")
+    print("  scaudit diagnose input.h5ad --cluster-key leiden --out results/")
     print("  scaudit init-config input.h5ad --format toml --out config.toml")
     print("  scaudit validate config.toml")
     print("  scaudit plan config.toml")
@@ -387,6 +433,7 @@ def _print_help() -> None:
     print("  scaudit finalize results/ --out final/")
     print()
     print("Commands:")
+    print("  diagnose    Inspect dataset structure and metadata")
     print("  doctor       Show environment capability checks")
     print("  finalize     Freeze a draft run into final output skeleton")
     print("  init-config  Create a starter config.toml")
@@ -404,6 +451,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         _print_help()
         return
     command = args[0]
+    if command == "diagnose":
+        diagnose(args[1:])
+        return
     if command == "doctor":
         doctor()
         return

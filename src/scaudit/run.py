@@ -11,6 +11,7 @@ from typing import Any
 
 from scaudit import __version__
 from scaudit.config import load_config
+from scaudit.data import diagnose_dataset
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,12 @@ def prepare_run(config_path: Path) -> RunOutputs:
     )
 
     shutil.copyfile(config_path, outputs.resolved_config)
-    _write_json(outputs.diagnosis, _diagnosis_payload(config))
+    dataset = config.get("dataset", {})
+    diagnosis = diagnose_dataset(
+        Path(str(dataset.get("path", ""))),
+        cluster_key=str(dataset.get("cluster_key", "")),
+    )
+    _write_json(outputs.diagnosis, diagnosis.to_dict())
     _write_json(outputs.annotation_cards, [])
     _write_annotation_summary(outputs.annotation_summary)
     _write_review_table(outputs.review_table)
@@ -109,22 +115,6 @@ def _copy_or_default(source: Path, destination: Path, default_text: str) -> None
         shutil.copyfile(source, destination)
     else:
         destination.write_text(default_text, encoding="utf-8")
-
-
-def _diagnosis_payload(config: dict[str, Any]) -> dict[str, Any]:
-    dataset = config.get("dataset", {})
-    return {
-        "dataset": {
-            "path": dataset.get("path", ""),
-            "species": dataset.get("species", ""),
-            "tissue": dataset.get("tissue", ""),
-            "cluster_key": dataset.get("cluster_key", ""),
-        },
-        "status": "placeholder",
-        "warnings": [
-            "Dataset diagnosis is a placeholder until AnnData reading is implemented."
-        ],
-    }
 
 
 def _reproducibility_payload(config: dict[str, Any]) -> dict[str, Any]:
