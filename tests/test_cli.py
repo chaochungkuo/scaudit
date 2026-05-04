@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from scaudit.config import load_config, validate_config
 from scaudit.cli import collect_capabilities, main
+from scaudit.run import build_annotation_cards
 
 
 class CliTests(unittest.TestCase):
@@ -91,6 +92,12 @@ class CliTests(unittest.TestCase):
             self.assertTrue((output_dir / "report" / "index.html").exists())
             self.assertTrue((output_dir / "report" / "annotation.html").exists())
             self.assertTrue((output_dir / "report" / "clusters" / "index.html").exists())
+
+    def test_build_annotation_cards_from_cluster_sizes(self) -> None:
+        cards = build_annotation_cards({"cluster_sizes": {"0": 10, "1": 12}})
+        self.assertEqual(len(cards), 2)
+        self.assertEqual(cards[0]["decision"], "Needs review")
+        self.assertEqual(cards[0]["provenance"]["cell_count"], 10)
 
     def test_finalize_command_writes_final_skeleton(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

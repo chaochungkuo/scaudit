@@ -60,10 +60,12 @@ def prepare_run(config_path: Path) -> RunOutputs:
         Path(str(dataset.get("path", ""))),
         cluster_key=str(dataset.get("cluster_key", "")),
     )
-    _write_json(outputs.diagnosis, diagnosis.to_dict())
-    _write_json(outputs.annotation_cards, [])
-    _write_annotation_summary(outputs.annotation_summary)
-    _write_review_table(outputs.review_table)
+    diagnosis_payload = diagnosis.to_dict()
+    annotation_cards = build_annotation_cards(diagnosis_payload)
+    _write_json(outputs.diagnosis, diagnosis_payload)
+    _write_json(outputs.annotation_cards, annotation_cards)
+    _write_annotation_summary(outputs.annotation_summary, annotation_cards)
+    _write_review_table(outputs.review_table, annotation_cards)
     _write_json(outputs.reproducibility, _reproducibility_payload(config))
     render_draft_report(report_dir, outputs.diagnosis, outputs.annotation_cards)
     return outputs
@@ -135,13 +137,70 @@ def _reproducibility_payload(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _write_annotation_summary(path: Path) -> None:
+def build_annotation_cards(diagnosis: dict[str, Any]) -> list[dict[str, Any]]:
+    cluster_sizes = diagnosis.get("cluster_sizes", {})
+    if not isinstance(cluster_sizes, dict) or not cluster_sizes:
+        return []
+
+    cards: list[dict[str, Any]] = []
+    for cluster_id, cell_count in sorted(cluster_sizes.items(), key=lambda item: str(item[0])):
+        cards.append(
+            {
+                "cluster_id": str(cluster_id),
+                "proposed_label": None,
+                "decision": "Needs review",
+                "confidence": {
+                    "lineage": "unknown",
+                    "subtype": "unknown",
+                    "overall": "unknown",
+                },
+                "evidence": {
+                    "markers": [],
+                    "models": [],
+                    "references": [],
+                    "ontology": [],
+                    "qc_warnings": [],
+                },
+                "uncertainty": {
+                    "model_disagreement": "unknown",
+                    "reference_distance": "unknown",
+                    "marker_inconsistency": "unknown",
+                },
+                "reasoning": {
+                    "summary": "Cluster detected during dataset diagnosis. Evidence generation is pending.",
+                    "supports": [],
+                    "contradictions": [],
+                    "uncertainties": ["No marker, model, or reference evidence has been computed yet."],
+                    "validation_suggestions": [],
+                },
+                "provenance": {
+                    "parameters": {},
+                    "models": [],
+                    "references": [],
+                    "cell_count": int(cell_count),
+                },
+            }
+        )
+    return cards
+
+
+def _write_annotation_summary(path: Path, annotation_cards: list[dict[str, Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["cluster_id", "proposed_label", "decision", "confidence", "review_priority"])
+        for card in annotation_cards:
+            writer.writerow(
+                [
+                    card["cluster_id"],
+                    card["proposed_label"] or "",
+                    card["decision"],
+                    card["confidence"]["overall"],
+                    "review",
+                ]
+            )
 
 
-def _write_review_table(path: Path) -> None:
+def _write_review_table(path: Path, annotation_cards: list[dict[str, Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(
@@ -155,8 +214,19 @@ def _write_review_table(path: Path) -> None:
                 "reviewer_note",
             ]
         )
+        for card in annotation_cards:
+            writer.writerow(
+                [
+                    card["cluster_id"],
+                    card["proposed_label"] or "",
+                    card["decision"],
+                    card["confidence"]["overall"],
+                    "pending",
+                    "",
+                    "",
+                ]
+            )
 
 
 def _write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
