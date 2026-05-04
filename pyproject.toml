@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "scaudit"
+version = "0.1.0"
+description = "Transparent annotation audit framework for single-cell RNA-seq"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+  { name = "scaudit contributors" }
+]
+dependencies = [
+  "typer>=0.12",
+  "rich>=13.7"
+]
+
+[project.scripts]
+scaudit = "scaudit.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scaudit"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
