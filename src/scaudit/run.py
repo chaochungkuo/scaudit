@@ -46,6 +46,7 @@ def annotate_direct(
     output_dir: Path,
     species: str = "",
     tissue: str = "",
+    sample_key: str = "",
     llm: bool = True,
 ) -> RunOutputs:
     """Run a full annotation audit without requiring a config file.
@@ -64,6 +65,8 @@ def annotate_direct(
     # Patch cluster_key and output dir into the written TOML
     text = tmp_path.read_text(encoding="utf-8")
     text = text.replace('cluster_key = ""', f'cluster_key = "{cluster_key}"')
+    if sample_key:
+        text = text.replace('sample_key = ""', f'sample_key = "{sample_key}"')
     text = text.replace('dir = "results"', f'dir = "{output_dir}"')
     if species:
         text = text.replace('species = ""', f'species = "{species}"')
@@ -100,8 +103,9 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
     dataset = config.get("dataset", {})
     dataset_path = Path(str(dataset.get("path", "")))
     cluster_key = str(dataset.get("cluster_key", ""))
+    sample_key = str(dataset.get("sample_key", ""))
 
-    diagnosis = diagnose_dataset(dataset_path, cluster_key=cluster_key)
+    diagnosis = diagnose_dataset(dataset_path, cluster_key=cluster_key, sample_key=sample_key)
     diagnosis_payload = diagnosis.to_dict()
 
     selected_refs = config.get("references", {}).get("selected", [])

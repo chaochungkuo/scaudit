@@ -14,6 +14,7 @@ from scaudit.config import load_config, validate_config
 from scaudit.cli import collect_capabilities, main
 from scaudit.data import infer_gene_id_counts, infer_gene_id_type, summarize_cluster_key
 from scaudit.markers import attach_marker_evidence, marker_rows_from_rank_genes_groups
+from scaudit.report import render_draft_report
 from scaudit.run import build_annotation_cards
 
 
@@ -253,6 +254,50 @@ class CliTests(unittest.TestCase):
         self.assertIn("label", top)
         self.assertIn("jaccard", top)
         self.assertGreater(top["jaccard"], 0)
+
+    def test_report_umap_has_cluster_confidence_and_sample_tabs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            diagnosis_path = temp_path / "diagnosis.json"
+            cards_path = temp_path / "annotation_cards.json"
+            report_dir = temp_path / "report"
+            diagnosis_path.write_text(
+                json.dumps(
+                    {
+                        "path": "input.h5ad",
+                        "n_obs": 2,
+                        "n_vars": 3,
+                        "cluster_count": 1,
+                        "warnings": [],
+                        "umap_coords": {"0": {"x": [0.0, 1.0], "y": [0.0, 1.0], "sample": ["s1", "s2"]}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cards_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "cluster_id": "0",
+                            "proposed_label": "T cell",
+                            "decision": "Needs review",
+                            "confidence": {"overall": "medium", "lineage": "medium", "subtype": "unknown"},
+                            "evidence": {"markers": [], "models": [], "references": [], "ontology": [], "qc_warnings": []},
+                            "reasoning": {"summary": "review", "supports": [], "contradictions": [], "uncertainties": [], "validation_suggestions": []},
+                            "provenance": {"cell_count": 2},
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            report_path = render_draft_report(report_dir, diagnosis_path, cards_path)
+            html = report_path.read_text(encoding="utf-8")
+
+            self.assertIn('data-umap-mode="cluster"', html)
+            self.assertIn('data-umap-mode="confidence"', html)
+            self.assertIn('data-umap-mode="sample"', html)
+            self.assertIn("window.scauditUMAPTraces", html)
 
     def test_reference_add_and_use(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

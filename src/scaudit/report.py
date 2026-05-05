@@ -28,6 +28,26 @@ _DECISION_COLOR: dict[str, str] = {
     "Artifact warning": "#c0392b",
 }
 
+_CONFIDENCE_COLOR: dict[str, str] = {
+    "high": "#2a9d5c",
+    "medium": "#d97706",
+    "low": "#c0392b",
+    "unknown": "#8899aa",
+}
+
+_CLUSTER_PALETTE = [
+    "#2f67c8",
+    "#2a9d5c",
+    "#d97706",
+    "#7446a8",
+    "#129a9f",
+    "#c0392b",
+    "#6b8e23",
+    "#b45309",
+    "#4b5563",
+    "#be185d",
+]
+
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
@@ -160,27 +180,30 @@ def _umap_plotly(cards: list[dict[str, Any]], umap_coords: dict[str, Any] | None
         angle = base_angle + rng.uniform(-0.15, 0.15)
         centers.append((r * math.cos(angle), r * math.sin(angle)))
 
-    traces: list[dict] = []
+    cluster_traces: list[dict] = []
+    confidence_points: dict[str, dict[str, list[Any]]] = {}
+    sample_points: dict[str, dict[str, list[Any]]] = {}
     for i, card in enumerate(cards):
         count = card.get("provenance", {}).get("cell_count", 0) or 100
         decision = str(card.get("decision", "Unknown"))
-        color = _DECISION_COLOR.get(decision, "#8899aa")
         cluster_id = str(card.get("cluster_id", ""))
         proposed = str(card.get("proposed_label") or "")
         confidence = card.get("confidence", {})
-        overall = str(confidence.get("overall") or "—")
+        overall = str(confidence.get("overall") or "unknown")
         trace_name = proposed if proposed and proposed not in ("pending", "") else f"Cluster {cluster_id}"
 
         real = umap_coords.get(cluster_id)
         if real and real.get("x") and real.get("y"):
             xs = real["x"]
             ys = real["y"]
+            samples = real.get("sample") or []
         else:
             cx, cy = centers[i]
             sigma = 1.0 + 1.5 * math.sqrt(count / max_count)
             n_dots = min(300, max(50, count // 15 + 40))
             xs = []
             ys = []
+            samples = []
             for _ in range(n_dots):
                 u1 = rng.random() or 1e-10
                 u2 = rng.random()
@@ -196,16 +219,20 @@ def _umap_plotly(cards: list[dict[str, Any]], umap_coords: dict[str, Any] | None
             f"Confidence: {html.escape(overall)}<br>"
             f"Cells: {count:,}"
         )
-        traces.append({
+        cluster_traces.append({
             "type": "scatter",
             "x": xs,
             "y": ys,
             "mode": "markers",
-            "name": html.escape(trace_name),
+            "name": html.escape(f"Cluster {cluster_id}"),
             "text": [hover] * len(xs),
             "hovertemplate": "%{text}<extra></extra>",
-            "marker": {"color": color, "size": 5, "opacity": 0.55, "line": {"width": 0}},
+            "marker": {"color": _CLUSTER_PALETTE[i % len(_CLUSTER_PALETTE)], "size": 5, "opacity": 0.55, "line": {"width": 0}},
         })
+        _append_points(confidence_points, overall, xs, ys, [hover] * len(xs))
+        if samples and len(samples) == len(xs):
+            for sample, x, y in zip(samples, xs, ys):
+                _append_points(sample_points, str(sample), [x], [y], [hover + f"<br>Sample: {html.escape(str(sample))}"])
 
     layout = {
         "paper_bgcolor": "rgba(0,0,0,0)",
@@ -231,7 +258,16 @@ def _umap_plotly(cards: list[dict[str, Any]], umap_coords: dict[str, Any] | None
         "hovermode": "closest",
     }
 
-    traces_json = json.dumps(traces)
+    confidence_traces = _grouped_traces(confidence_points, _CONFIDENCE_COLOR)
+    sample_traces = _grouped_traces(sample_points)
+    trace_sets = {
+        "cluster": cluster_traces,
+        "confidence": confidence_traces,
+    }
+    if sample_traces:
+        trace_sets["sample"] = sample_traces
+
+    trace_sets_json = json.dumps(trace_sets)
     layout_json = json.dumps(layout)
     config_json = json.dumps({
         "responsive": True, "displaylogo": False,
@@ -243,15 +279,59 @@ def _umap_plotly(cards: list[dict[str, Any]], umap_coords: dict[str, Any] | None
       <div id="umap-loading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#f6f8fc;z-index:2;pointer-events:none">
         <p style="color:var(--muted);font-size:13px">Loading interactive UMAP&hellip; (requires internet access)</p>
       </div>
+      <div class="umap-tabs" aria-label="UMAP color mode">
+        <button type="button" class="umap-tab is-active" data-umap-mode="cluster">Clusters</button>
+        <button type="button" class="umap-tab" data-umap-mode="confidence">Confidence</button>
+        {'<button type="button" class="umap-tab" data-umap-mode="sample">Samples</button>' if sample_traces else ''}
+      </div>
       <div id="umap-plot" style="width:100%;height:100%"></div>
     </div>
     <script async src="{_PLOTLY_CDN}" onload="scauditRenderUMAP()"></script>
     <script>
+    window.scauditUMAPTraces = {trace_sets_json};
+    window.scauditUMAPLayout = {layout_json};
+    window.scauditUMAPConfig = {config_json};
     window.scauditRenderUMAP = function() {{
       document.getElementById('umap-loading').style.display = 'none';
-      Plotly.newPlot('umap-plot', {traces_json}, {layout_json}, {config_json});
+      Plotly.newPlot('umap-plot', window.scauditUMAPTraces.cluster, window.scauditUMAPLayout, window.scauditUMAPConfig);
+      document.querySelectorAll('[data-umap-mode]').forEach(function(button) {{
+        button.addEventListener('click', function() {{
+          var mode = button.getAttribute('data-umap-mode');
+          document.querySelectorAll('[data-umap-mode]').forEach(function(item) {{ item.classList.remove('is-active'); }});
+          button.classList.add('is-active');
+          Plotly.react('umap-plot', window.scauditUMAPTraces[mode], window.scauditUMAPLayout, window.scauditUMAPConfig);
+        }});
+      }});
     }};
     </script>"""
+
+
+def _append_points(target: dict[str, dict[str, list[Any]]], key: str, xs: list[Any], ys: list[Any], text: list[str]) -> None:
+    bucket = target.setdefault(key or "unknown", {"x": [], "y": [], "text": []})
+    bucket["x"].extend(xs)
+    bucket["y"].extend(ys)
+    bucket["text"].extend(text)
+
+
+def _grouped_traces(groups: dict[str, dict[str, list[Any]]], colors: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    traces = []
+    for index, (name, points) in enumerate(sorted(groups.items(), key=lambda item: item[0])):
+        traces.append({
+            "type": "scatter",
+            "x": points["x"],
+            "y": points["y"],
+            "mode": "markers",
+            "name": html.escape(str(name)),
+            "text": points["text"],
+            "hovertemplate": "%{text}<extra></extra>",
+            "marker": {
+                "color": (colors or {}).get(str(name), _CLUSTER_PALETTE[index % len(_CLUSTER_PALETTE)]),
+                "size": 5,
+                "opacity": 0.55,
+                "line": {"width": 0},
+            },
+        })
+    return traces
 
 
 # ── Review HTML ───────────────────────────────────────────────────────────────
@@ -753,6 +833,31 @@ _CSS = """
   /* ── UMAP section ── */
   .umap-section { padding: 20px 24px; }
   .umap-section .section-header { margin-bottom: 12px; }
+  .umap-tabs {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 3;
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(7, 25, 54, 0.08);
+  }
+  .umap-tab {
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 9px;
+    cursor: pointer;
+  }
+  .umap-tab:hover { background: #eef2f9; color: var(--navy); }
+  .umap-tab.is-active { background: var(--navy); color: white; }
 
   /* ── Attention panel ── */
   .attention-panel {

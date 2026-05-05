@@ -33,6 +33,7 @@ sc.settings.datasetdir = str(out_path.parent)
 
 adata = sc.datasets.pbmc3k()
 adata.var_names_make_unique()
+adata.obs["sample"] = "pbmc3k"
 sc.pp.filter_cells(adata, min_genes=200)
 sc.pp.filter_genes(adata, min_cells=3)
 sc.pp.normalize_total(adata, target_sum=1e4)
@@ -60,6 +61,7 @@ PYTHONPATH="$ROOT_DIR/src" python -m scaudit annotate "$DATASET_PATH" \
   --cluster-key scaudit_cluster \
   --species human \
   --tissue blood \
+  --sample-key sample \
   --out "$RESULTS_DIR" \
   --no-llm
 

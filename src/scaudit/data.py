@@ -133,7 +133,7 @@ def _empty_diagnosis(
     )
 
 
-def diagnose_dataset(path: Path, cluster_key: str = "") -> DatasetDiagnosis:
+def diagnose_dataset(path: Path, cluster_key: str = "", sample_key: str = "") -> DatasetDiagnosis:
     warnings: list[str] = []
     if not path.exists():
         return _empty_diagnosis(
@@ -202,7 +202,7 @@ def diagnose_dataset(path: Path, cluster_key: str = "") -> DatasetDiagnosis:
     umap_coords: dict[str, Any] = {}
     if cluster_key and cluster_sizes and "X_umap" in adata.obsm:
         try:
-            umap_coords = _extract_umap_coords(adata, cluster_key, cluster_sizes, max_per_cluster=500)
+            umap_coords = _extract_umap_coords(adata, cluster_key, cluster_sizes, sample_key=sample_key, max_per_cluster=500)
         except Exception as exc:  # pragma: no cover
             warnings.append(f"Could not extract UMAP coordinates: {exc}")
 
@@ -237,12 +237,14 @@ def _extract_umap_coords(
     adata: Any,
     cluster_key: str,
     cluster_sizes: dict[str, int],
+    sample_key: str = "",
     max_per_cluster: int = 500,
 ) -> dict[str, Any]:
     import numpy as np
 
     umap = adata.obsm["X_umap"]
     cluster_series = adata.obs[cluster_key].astype(str)
+    sample_series = adata.obs[sample_key].astype(str) if sample_key and sample_key in adata.obs else None
     rng = np.random.default_rng(42)
 
     coords: dict[str, Any] = {}
@@ -255,6 +257,8 @@ def _extract_umap_coords(
             "x": [round(float(v), 4) for v in pts[:, 0]],
             "y": [round(float(v), 4) for v in pts[:, 1]],
         }
+        if sample_series is not None:
+            coords[cluster_id]["sample"] = [str(sample_series.values[index]) for index in sorted(indices.tolist())]
     return coords
 
 

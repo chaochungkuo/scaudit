@@ -108,6 +108,7 @@ def annotate(args: Sequence[str]) -> None:
     dataset_path = Path(args[0])
     output_dir = Path("results")
     cluster_key = ""
+    sample_key = ""
     species = ""
     tissue = ""
     no_llm = False
@@ -120,6 +121,9 @@ def annotate(args: Sequence[str]) -> None:
             index += 2
         elif token == "--cluster-key" and index + 1 < len(args):
             cluster_key = args[index + 1]
+            index += 2
+        elif token == "--sample-key" and index + 1 < len(args):
+            sample_key = args[index + 1]
             index += 2
         elif token == "--species" and index + 1 < len(args):
             species = args[index + 1]
@@ -154,6 +158,7 @@ def annotate(args: Sequence[str]) -> None:
             output_dir=output_dir,
             species=species,
             tissue=tissue,
+            sample_key=sample_key,
             llm=not no_llm,
         )
     except Exception as exc:
@@ -180,6 +185,7 @@ def diagnose(args: Sequence[str]) -> None:
     dataset_path = Path(args[0])
     output_dir = Path("results")
     cluster_key = ""
+    sample_key = ""
 
     index = 1
     while index < len(args):
@@ -190,11 +196,14 @@ def diagnose(args: Sequence[str]) -> None:
         elif token == "--cluster-key" and index + 1 < len(args):
             cluster_key = args[index + 1]
             index += 2
+        elif token == "--sample-key" and index + 1 < len(args):
+            sample_key = args[index + 1]
+            index += 2
         else:
             print(f"Unknown option for diagnose: {token}", file=sys.stderr)
             raise SystemExit(2)
 
-    diagnosis = diagnose_dataset(dataset_path, cluster_key=cluster_key)
+    diagnosis = diagnose_dataset(dataset_path, cluster_key=cluster_key, sample_key=sample_key)
     output_dir.mkdir(parents=True, exist_ok=True)
     diagnosis_path = output_dir / "diagnosis.json"
     import json
@@ -501,8 +510,8 @@ def _print_help() -> None:
     print("  scaudit --help")
     print("  scaudit version")
     print("  scaudit doctor")
-    print("  scaudit annotate input.h5ad --cluster-key leiden --species mouse --tissue heart --out results/")
-    print("  scaudit diagnose input.h5ad --cluster-key leiden --out results/")
+    print("  scaudit annotate input.h5ad --cluster-key leiden --sample-key sample --species mouse --tissue heart --out results/")
+    print("  scaudit diagnose input.h5ad --cluster-key leiden --sample-key sample --out results/")
     print("  scaudit init-config input.h5ad --format toml --out config.toml")
     print("  scaudit validate config.toml")
     print("  scaudit plan config.toml")

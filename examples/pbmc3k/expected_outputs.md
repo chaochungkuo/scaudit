@@ -27,3 +27,4 @@ Minimum content checks:
 - `marker_evidence.csv` has more than one row.
 - At least one annotation card has non-empty `evidence.markers`.
 - `report/report.html` contains `scaudit report`.
+- `report/report.html` contains UMAP tabs for clusters, confidence, and samples.
