@@ -1,6 +1,37 @@
 # CLI UX and Terminal Output
 
-This document defines the desired command-line user experience for scaudit. The CLI should feel like a polished scientific engineering tool, not a minimal script wrapper.
+This document defines the desired command-line user experience for scaudit.
+The CLI should feel like a polished scientific engineering tool, not a minimal script wrapper.
+
+## Implemented Commands (✅)
+
+```bash
+scaudit --help / -h
+scaudit version / --version
+scaudit doctor
+scaudit annotate input.h5ad --cluster-key leiden [--species mouse] [--tissue heart] [--out results/] [--no-llm]
+scaudit init-config input.h5ad [--format toml] [--out config.toml]
+scaudit validate config.toml
+scaudit plan config.toml
+scaudit diagnose input.h5ad [--cluster-key leiden] [--out results/]
+scaudit run config.toml
+scaudit review import review_table.csv --run results/
+scaudit finalize results/ [--out final/]
+scaudit reference add ref.h5ad --id ID --species SPECIES --tissue TISSUE --label-key KEY
+scaudit reference list
+scaudit reference use ID [--config config.toml]
+```
+
+## Planned Commands (🔲)
+
+```bash
+scaudit debug --run results/ --cluster 7    # Per-cluster evidence panel
+scaudit cache list                           # Show cached reference/model artifacts
+scaudit cache clean                          # Remove stale cache entries
+scaudit reference search --species mouse --tissue heart  # Discover public references
+scaudit reference download <id> --version ...            # Download from CELLxGENE / HCA
+```
+
 
 ## Product Requirement
 
@@ -64,6 +95,28 @@ Colors should be semantic and consistent across commands.
 ```
 
 ## Command Output Patterns
+
+## `scaudit annotate`
+
+```text
+Annotating input.h5ad
+  cluster key : leiden
+  species     : mouse
+  tissue      : heart
+  output      : results/
+
+Annotation audit complete
+
+Outputs:
+  Report             : results/report/report.html
+  Annotation cards   : results/annotation_cards.json
+  Review table       : results/review_table.csv
+  Reproducibility    : results/reproducibility.json
+
+Next:
+  Open results/report/report.html
+  scaudit review import results/review_table.csv --run results/
+```
 
 ## `scaudit doctor`
 
@@ -150,7 +203,7 @@ Estimated stages:
 
 ## `scaudit run config.toml`
 
-Should show a clear stage progression:
+Config-based equivalent of `scaudit annotate`. Shows a clear stage progression:
 
 ```text
 scaudit run config.toml
@@ -283,17 +336,17 @@ Fix:
 
 ## MVP CLI UX Requirements
 
-The first implementation should include:
+Status:
 
 ```text
-- rich console output
-- colored status badges
-- validation tables
-- run progress stages
-- final output summary
-- actionable errors
-- --no-color
-- --json for automation
+✅ rich console output (doctor command)
+✅ colored status badges (OK / WARN / SKIPPED / ERROR)
+✅ validation tables (validate / plan / diagnose)
+✅ run progress stages (run command)
+✅ final output summary with next-step hints
+🔲 actionable errors (improved error messages for missing cluster key, etc.)
+🔲 --no-color
+🔲 --json for automation / CI
 ```
 
 ## Mature CLI UX Requirements

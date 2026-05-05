@@ -13,7 +13,7 @@ from scaudit.data import diagnose_dataset
 from scaudit.references import add_reference, load_registry, use_reference
 from scaudit.rendering import print_bullets, print_status_table
 from scaudit.review import import_review_table
-from scaudit.run import finalize_run, prepare_run
+from scaudit.run import annotate_direct, finalize_run, prepare_run
 
 
 @dataclass(frozen=True)
@@ -99,6 +99,78 @@ def doctor() -> None:
 
 def version() -> None:
     print(f"scaudit {__version__}")
+
+
+def annotate(args: Sequence[str]) -> None:
+    if not args:
+        print("ERROR: input .h5ad path is required", file=sys.stderr)
+        raise SystemExit(2)
+    dataset_path = Path(args[0])
+    output_dir = Path("results")
+    cluster_key = ""
+    species = ""
+    tissue = ""
+    no_llm = False
+
+    index = 1
+    while index < len(args):
+        token = args[index]
+        if token == "--out" and index + 1 < len(args):
+            output_dir = Path(args[index + 1])
+            index += 2
+        elif token == "--cluster-key" and index + 1 < len(args):
+            cluster_key = args[index + 1]
+            index += 2
+        elif token == "--species" and index + 1 < len(args):
+            species = args[index + 1]
+            index += 2
+        elif token == "--tissue" and index + 1 < len(args):
+            tissue = args[index + 1]
+            index += 2
+        elif token == "--no-llm":
+            no_llm = True
+            index += 1
+        else:
+            print(f"Unknown option for annotate: {token}", file=sys.stderr)
+            raise SystemExit(2)
+
+    if not cluster_key:
+        print("ERROR: --cluster-key is required", file=sys.stderr)
+        raise SystemExit(2)
+
+    print(f"Annotating {dataset_path}")
+    print(f"  cluster key : {cluster_key}")
+    if species:
+        print(f"  species     : {species}")
+    if tissue:
+        print(f"  tissue      : {tissue}")
+    print(f"  output      : {output_dir}")
+    print()
+
+    try:
+        outputs = annotate_direct(
+            dataset_path,
+            cluster_key=cluster_key,
+            output_dir=output_dir,
+            species=species,
+            tissue=tissue,
+            llm=not no_llm,
+        )
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    print("Annotation audit complete")
+    print()
+    print("Outputs:")
+    print(f"  Report             : {outputs.report_index}")
+    print(f"  Annotation cards   : {outputs.annotation_cards}")
+    print(f"  Review table       : {outputs.review_table}")
+    print(f"  Reproducibility    : {outputs.reproducibility}")
+    print()
+    print("Next:")
+    print(f"  Open {outputs.report_index}")
+    print(f"  scaudit review import {outputs.review_table} --run {outputs.output_dir}")
 
 
 def diagnose(args: Sequence[str]) -> None:
@@ -421,6 +493,7 @@ def _print_help() -> None:
     print("  scaudit --help")
     print("  scaudit version")
     print("  scaudit doctor")
+    print("  scaudit annotate input.h5ad --cluster-key leiden --species mouse --tissue heart --out results/")
     print("  scaudit diagnose input.h5ad --cluster-key leiden --out results/")
     print("  scaudit init-config input.h5ad --format toml --out config.toml")
     print("  scaudit validate config.toml")
@@ -433,7 +506,8 @@ def _print_help() -> None:
     print("  scaudit finalize results/ --out final/")
     print()
     print("Commands:")
-    print("  diagnose    Inspect dataset structure and metadata")
+    print("  annotate     Full annotation audit from h5ad in one command")
+    print("  diagnose     Inspect dataset structure and metadata")
     print("  doctor       Show environment capability checks")
     print("  finalize     Freeze a draft run into final output skeleton")
     print("  init-config  Create a starter config.toml")
@@ -451,6 +525,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         _print_help()
         return
     command = args[0]
+    if command == "annotate":
+        annotate(args[1:])
+        return
     if command == "diagnose":
         diagnose(args[1:])
         return

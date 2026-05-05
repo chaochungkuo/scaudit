@@ -1,664 +1,169 @@
 # HTML Report Architecture
 
-This document defines the proposed structure for scaudit's HTML reporting system. The report should feel like a polished scientific analysis portal, not a single long static notebook.
+This document defines the structure and design of scaudit's HTML reporting system.
 
-## Design Goal
+## Current Implementation
 
-The report should be:
-
-- Clear in hierarchy.
-- Easy to navigate.
-- Beautiful but restrained.
-- Scientific and publication-ready.
-- Useful for both quick overview and deep inspection.
-- Built around evidence, uncertainty, and reviewability.
-
-The report should not feel like a raw notebook export. It should feel like a structured annotation audit dossier.
-
-## Core Principle
-
-Use a multi-page report structure:
-
-```text
-index.html
--> overview and navigation hub
--> links to focused subreports
--> each subreport answers one analysis question
-```
-
-This avoids making users scroll through an overwhelming single page and allows each level of detail to have its own layout.
-
-## Proposed Report Folder
+scaudit generates **2 static HTML files**, no server required, no Quarto dependency.
 
 ```text
 report/
-├── index.html
-├── dataset.html
-├── annotation.html
-├── clusters/
-│   ├── index.html
-│   ├── cluster_0.html
-│   ├── cluster_1.html
-│   └── cluster_2.html
-├── evidence.html
-├── references.html
-├── uncertainty.html
-├── comparison.html
-├── review.html
-├── methods.html
-├── reproducibility.html
-├── figures/
-├── tables/
-└── assets/
+├── report.html   # Annotation audit view
+└── review.html   # Human review worksheet
 ```
 
-## Page 1: `index.html`
+Both files are fully self-contained (inline CSS + JS). The Plotly CDN is loaded
+asynchronously; the chart degrades gracefully to a "Loading…" overlay when offline.
 
-## Purpose
+---
 
-The entry point and navigation hub.
+## report.html — Audit View
 
-It should answer:
+### Sections
+
+**Hero**
+- Dataset path.
+- Decision pill summary (`Accepted`, `Ambiguous`, `Needs review`, `Artifact warning`).
+
+**Metrics grid**
+- Cells, Genes, Clusters, Needs attention.
+
+**Cluster overview (Plotly UMAP)**
+- One trace per cluster, colored by decision state.
+- Hover: cluster ID, proposed label, decision, confidence, cell count.
+- Uses real `adata.obsm['X_umap']` when available (sampled ≤500 pts/cluster).
+- Falls back to deterministic Gaussian blobs (seeded, polar layout) when UMAP is absent.
+- Async CDN load (`plotly-2.35.2.min.js`); loading overlay while pending.
+
+**Attention panel**
+- All clusters with decision ∈ {Ambiguous, Unknown, Needs review, Artifact warning}.
+- Quick links to cluster card anchors.
+
+**Warning list**
+- Propagated from `diagnosis.warnings` (missing cluster key, unreadable file, etc.).
+
+**Cluster cards** (one `<details>` per cluster)
+- Decision-color left border.
+- Summary row: badge + cluster label + proposed label + confidence + cell count.
+- Confidence row: lineage / subtype / overall badges.
+- Evidence block:
+  - **Markers**: top gene names (comma-separated).
+  - **Marker DB**: builtin marker DB matches with Jaccard scores.
+  - **References**: external reference h5ad matches.
+  - **Models**: CellTypist label + probability %.
+  - **QC flags**: (when populated).
+- Reasoning block:
+  - Supports (green left border).
+  - Contradictions (orange).
+  - Uncertainties (grey).
+  - Suggested validation (blue).
+- Cards for `Needs attention` decisions are open by default.
+
+**Methods section**
+- Evidence sources used, software versions, dataset metadata.
+
+---
+
+## review.html — Review Worksheet
+
+**Purpose**: human reviewers accept, change, or flag cluster labels without running code.
+
+**Features**:
+- One row per cluster: proposed label, scaudit decision badge, decision dropdown, new label input, note input.
+- JavaScript `downloadCSV()` exports the filled table as `review_table.csv`.
+- Import: `scaudit review import review_table.csv --run results/`
+
+**Review table schema**:
+
+```csv
+cluster_id, proposed_label, decision, confidence, review_status, reviewed_label, reviewer_note
+```
+
+---
+
+## Visual Design
+
+**Color palette** (CSS variables):
+
+```css
+--green:   #2a9d5c   /* Accepted */
+--orange:  #c9600a   /* Needs review */
+--amber:   #d97706   /* Ambiguous */
+--muted:   #8899aa   /* Unknown */
+--red:     #c0392b   /* Artifact warning */
+--navy:    #1a2e4a   /* Primary text */
+--border:  #dce4f0   /* Borders */
+```
+
+**Cluster card left borders** use `data-decision` attribute for CSS targeting:
+
+```css
+.cluster-card[data-decision="Accepted"]       { border-left-color: var(--green); }
+.cluster-card[data-decision="Needs review"]   { border-left-color: var(--orange); }
+.cluster-card[data-decision="Ambiguous"]      { border-left-color: var(--amber); }
+.cluster-card[data-decision="Artifact warning"] { border-left-color: var(--red); }
+```
+
+**Confidence badges** use `.conf-high`, `.conf-medium`, `.conf-low`, `.conf-unknown` classes.
+
+**Reasoning blocks** use `.rblock-support`, `.rblock-conflict`, `.rblock-uncertain`, `.rblock-suggest`.
+
+---
+
+## Generation
+
+```python
+from scaudit.report import render_draft_report, render_final_report
+
+# Draft (after scaudit run)
+render_draft_report(report_dir, diagnosis_path, annotation_cards_path)
+
+# Final (after scaudit finalize)
+render_final_report(report_dir)
+```
+
+`render_draft_report` writes both `report.html` and `review.html`.
+`render_final_report` writes a summary `report.html` confirming final outputs.
+
+---
+
+## Planned Improvements (Post-MVP)
+
+### Additional sections in report.html
+
+- **Marker evidence heatmap**: Plotly heatmap of top marker scores across clusters.
+- **Reference match matrix**: Jaccard similarity heatmap (clusters × known cell types).
+- **Evidence completeness panel**: which clusters have all evidence sources vs. gaps.
+- **UMAP color toggles**: switch between decision, confidence, proposed label.
+
+### Additional pages
+
+When the cluster count exceeds ~50, a second file may be introduced:
 
 ```text
-What dataset is this?
-What did scaudit conclude?
-What needs attention?
-Where should I click next?
+report/
+├── report.html          # Summary + UMAP + attention panel
+├── review.html          # Review worksheet
+├── clusters.html        # Searchable/filterable cluster table
+└── methods.html         # Auto-generated methods text
 ```
 
-## Sections
+### Click-through navigation
 
-### Hero Summary
+UMAP trace `customdata` → click → jump to cluster card anchor (already feasible with
+`Plotly.react` click events and `location.hash`).
 
-Content:
+### Offline-first
 
-- Project / dataset name.
-- Species, tissue, condition, sample count, cell count.
-- Run date and scaudit version.
-- Overall annotation status.
+Bundle Plotly inline when `--offline` is passed to avoid CDN dependency for
+air-gapped compute environments.
 
-Example:
+---
 
-```text
-Mouse heart single-cell annotation audit
-42,381 cells · 18 clusters · 4 samples · 2 conditions
-Annotation status: 14 accepted, 3 ambiguous, 1 needs review
-```
+## Design Principles
 
-### Key Metrics
-
-Use compact metric tiles:
-
-```text
-Cells
-Clusters
-Accepted labels
-Ambiguous clusters
-Unknown clusters
-Reference match
-Model agreement
-```
-
-### Main Navigation
-
-Primary navigation cards:
-
-```text
-Dataset overview
-Annotation summary
-Cluster reports
-Evidence audit
-Reference audit
-Uncertainty
-Condition comparison
-Review table
-Methods
-Reproducibility
-```
-
-### Executive Summary
-
-A short human-readable summary:
-
-- Main annotation findings.
-- Strongest supported cell types.
-- Ambiguous or suspicious clusters.
-- Recommended review priorities.
-
-### Attention Panel
-
-A prioritized list:
-
-```text
-Needs review:
-- Cluster 7: conflicting T cell / NK evidence
-- Cluster 12: low gene overlap with selected reference
-- Cluster 15: possible doublet or ambient RNA signal
-```
-
-### Global UMAP
-
-Interactive Plotly UMAP:
-
-- Color by final annotation.
-- Toggle by cluster, sample, condition, confidence.
-- Click cluster links to cluster-level pages if possible.
-
-## Page 2: `dataset.html`
-
-## Purpose
-
-Dataset diagnosis and QC.
-
-It should answer:
-
-```text
-What is the input dataset, and is it suitable for annotation?
-```
-
-## Sections
-
-- Input file and metadata summary.
-- Cell and gene counts.
-- Sample / batch / condition distribution.
-- QC metrics.
-- Cluster size distribution.
-- Detected metadata keys.
-- Warnings about missing metadata.
-- Batch effect diagnostic summary.
-
-## Figures
-
-- UMAP by sample.
-- UMAP by condition.
-- UMAP by batch.
-- QC violin plots.
-- Cluster size bar plot.
-
-## Page 3: `annotation.html`
-
-## Purpose
-
-High-level annotation summary.
-
-It should answer:
-
-```text
-What labels were assigned, and how confident are they?
-```
-
-## Sections
-
-- Annotation summary table.
-- Final label per cluster.
-- Decision state per cluster.
-- Confidence by lineage and subtype.
-- Accepted / ambiguous / unknown / needs review counts.
-- Link to each cluster detail page.
-
-## Figures
-
-- UMAP by final annotation.
-- UMAP by decision status.
-- Confidence heatmap.
-- Cluster-label summary bar chart.
-
-## Page 4: `clusters/index.html`
-
-## Purpose
-
-Cluster report directory.
-
-It should answer:
-
-```text
-Which clusters exist, what are their labels, and which ones need attention?
-```
-
-## Sections
-
-- Searchable cluster table.
-- Filter by decision status.
-- Filter by confidence.
-- Filter by cell type lineage.
-- Links to individual cluster pages.
-
-## Cluster Table Columns
-
-```text
-Cluster
-Final label
-Decision
-Lineage confidence
-Subtype confidence
-Top markers
-Top model prediction
-Top reference match
-Warnings
-Review priority
-```
-
-## Page 5: `clusters/cluster_<id>.html`
-
-## Purpose
-
-The most important detail page. Each cluster gets one annotation card page.
-
-It should answer:
-
-```text
-Why was this cluster assigned this label, and should I trust it?
-```
-
-## Sections
-
-### Cluster Header
-
-- Cluster ID.
-- Final label.
-- Decision status.
-- Confidence badges.
-- Cell count and percentage.
-- Review priority.
-
-### Final Decision
-
-Clear decision block:
-
-```text
-Final decision: Cardiomyocyte
-Lineage confidence: high
-Subtype confidence: medium
-Decision: Accepted
-```
-
-### Evidence Summary
-
-A compact summary of:
-
-- Marker evidence.
-- Reference evidence.
-- Model evidence.
-- Ontology / hierarchy evidence.
-- QC warnings.
-
-### Marker Evidence
-
-Content:
-
-- Top marker table.
-- Known marker support.
-- Contradictory markers.
-- Suggested validation markers.
-
-Figures:
-
-- Marker dot plot.
-- Marker heatmap.
-- Violin plots for selected markers.
-
-### Reference Evidence
-
-Content:
-
-- Best matching reference.
-- Similarity score or category.
-- Reference version.
-- Metadata match.
-- Gene overlap.
-- Reference bias warnings.
-
-### Model Evidence
-
-Content:
-
-- Model predictions.
-- Scores / confidence.
-- Agreement or disagreement.
-- Per-cell prediction distribution within the cluster.
-
-### Uncertainty
-
-Content:
-
-- What is known.
-- What is unresolved.
-- Why confidence is limited.
-- Alternative hypotheses.
-
-### LLM Explanation
-
-Evidence-grounded explanation:
-
-- Summary.
-- Supports.
-- Contradictions.
-- Uncertainties.
-- Suggested validation.
-
-### Review Panel
-
-Human review fields:
-
-```text
-Accept label
-Change label
-Mark ambiguous
-Mark unknown
-Add note
-```
-
-In static HTML, this can initially be represented as an exported review table rather than live editing.
-
-## Page 6: `evidence.html`
-
-## Purpose
-
-Cross-cluster evidence audit.
-
-It should answer:
-
-```text
-How consistent is the evidence across the whole dataset?
-```
-
-## Sections
-
-- Marker evidence matrix.
-- Model agreement matrix.
-- Reference similarity matrix.
-- Evidence completeness table.
-- Contradiction table.
-
-## Figures
-
-- Marker heatmap.
-- Model agreement heatmap.
-- Reference similarity heatmap.
-- Evidence radar or stacked score chart per cluster.
-
-## Page 7: `references.html`
-
-## Purpose
-
-Reference selection and reference bias audit.
-
-It should answer:
-
-```text
-Which references were used, why were they selected, and are they appropriate?
-```
-
-## Sections
-
-- Reference list.
-- Reference manifest.
-- Reference scoring table.
-- Metadata match.
-- Gene overlap report.
-- Label coverage.
-- Reference bias warnings.
-
-## Figures
-
-- Reference score bar plot.
-- Gene overlap plot.
-- Label coverage chart.
-
-## Page 8: `uncertainty.html`
-
-## Purpose
-
-Focused uncertainty and risk view.
-
-It should answer:
-
-```text
-Where should the user be careful?
-```
-
-## Sections
-
-- Ambiguous clusters.
-- Unknown clusters.
-- Needs-review clusters.
-- Artifact warnings.
-- Model disagreement.
-- Low reference support.
-- Weak marker support.
-
-## Figures
-
-- UMAP by uncertainty.
-- Decision status map.
-- Model disagreement heatmap.
-- Review priority plot.
-
-## Page 9: `comparison.html`
-
-## Purpose
-
-Condition or group comparison, if metadata exists.
-
-It should answer:
-
-```text
-How do annotations, abundance, or states differ across conditions?
-```
-
-## Sections
-
-- Condition metadata summary.
-- Cell type abundance comparison.
-- Cluster abundance comparison.
-- State or marker program differences.
-- WT vs mutant interpretation, if applicable.
-
-## Figures
-
-- Abundance bar plots.
-- Stacked composition plots.
-- UMAP split by condition.
-- Marker or gene program comparison plots.
-
-If no condition key exists, this page should gracefully state that condition comparison was not run.
-
-## Page 10: `review.html`
-
-## Purpose
-
-Human review workflow.
-
-It should answer:
-
-```text
-What should the expert review, and how can corrections be made?
-```
-
-## Sections
-
-- Review priority table.
-- Editable CSV instructions.
-- Current accepted / changed / pending labels.
-- Link to exported review file.
-
-## Review Table Columns
-
-```text
-cluster_id
-proposed_label
-decision
-confidence
-review_status
-reviewed_label
-reviewer_note
-```
-
-## Page 11: `methods.html`
-
-## Purpose
-
-Paper-ready methods description.
-
-It should answer:
-
-```text
-How was this annotation generated?
-```
-
-## Sections
-
-- Input data.
-- Preprocessing.
-- Marker evidence.
-- Reference selection.
-- Model evidence.
-- Evidence fusion.
-- Decision rules.
-- LLM explanation policy.
-- Software versions.
-
-This page should be suitable for copying into a manuscript or supplement after light editing.
-
-## Page 12: `reproducibility.html`
-
-## Purpose
-
-Full reproducibility record.
-
-It should answer:
-
-```text
-Can this annotation run be audited and reproduced?
-```
-
-## Sections
-
-- scaudit version.
-- Input file hash.
-- Parameters.
-- Reference versions.
-- Model versions.
-- Dependency environment.
-- Runtime metadata.
-- Output file manifest.
-
-## Navigation Design
-
-## Global Sidebar
-
-Every page should include a persistent sidebar:
-
-```text
-Overview
-Dataset
-Annotation
-Clusters
-Evidence
-References
-Uncertainty
-Comparison
-Review
-Methods
-Reproducibility
-```
-
-## Breadcrumbs
-
-Cluster pages should include breadcrumbs:
-
-```text
-Overview > Clusters > Cluster 4
-```
-
-## Status Badges
-
-Use consistent badges:
-
-```text
-Accepted       green
-Ambiguous      yellow
-Unknown        gray
-Needs review   orange
-Artifact       red
-```
-
-## Visual Style
-
-Recommended style:
-
-- Clean scientific dashboard.
-- White or very light background.
-- Deep navy text and structure.
-- Purple / blue / teal / green accents from the logo.
-- Compact cards for metrics and cluster summaries.
-- Tables that are searchable and sortable.
-- Figures embedded near the interpretation they support.
-
-Avoid:
-
-- Raw notebook-style vertical dumps.
-- Overly decorative landing pages.
-- Hiding important warnings below long figures.
-- Too many colors without semantic meaning.
-
-## Report Generation Strategy
-
-Quarto can generate this structure as a multi-page website rather than a single document.
-
-Recommended source structure:
-
-```text
-report_src/
-├── _quarto.yml
-├── index.qmd
-├── dataset.qmd
-├── annotation.qmd
-├── clusters/
-│   ├── index.qmd
-│   └── cluster_template.qmd
-├── evidence.qmd
-├── references.qmd
-├── uncertainty.qmd
-├── comparison.qmd
-├── review.qmd
-├── methods.qmd
-└── reproducibility.qmd
-```
-
-The CLI can generate `.qmd` files from structured JSON outputs, then call Quarto to render HTML.
-
-## MVP Report Scope
-
-MVP should generate:
-
-```text
-index.html
-annotation.html
-clusters/index.html
-clusters/cluster_<id>.html
-methods.html
-reproducibility.html
-```
-
-Can be deferred:
-
-```text
-comparison.html
-review.html with live interactions
-advanced evidence heatmaps
-full Excel-linked navigation
-```
-
-## Final Report Promise
-
-The report should make the user feel:
-
-```text
-I can understand the annotation.
-I can see the evidence.
-I know what to trust.
-I know what needs review.
-I can share this with collaborators or reviewers.
-```
+- One file = one purpose. `report.html` is for understanding; `review.html` is for deciding.
+- All outputs are static. No server, no database, no build step.
+- Graceful degradation: every section has a sensible fallback when data is absent.
+- Evidence is always shown before the decision that derived from it.
+- Uncertainty is surfaced prominently, not buried.

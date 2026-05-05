@@ -1,10 +1,6 @@
 # Product Roadmap
 
-This roadmap describes how to build scaudit from zero to MVP, then into a mature scientific product, and finally into an industry-level platform.
-
-## Roadmap Principle
-
-scaudit should grow from a narrow, trustworthy vertical slice:
+scaudit grows from a narrow, trustworthy vertical slice:
 
 ```text
 input.h5ad -> evidence -> draft report -> review -> final annotated.h5ad
@@ -12,61 +8,39 @@ input.h5ad -> evidence -> draft report -> review -> final annotated.h5ad
 
 into a broader system only after the audit workflow is reliable.
 
-The product should not start as a full single-cell platform. It should first prove that annotation can be represented as:
+The product proves that annotation can be represented as:
 
 ```text
 Evidence + Reasoning + Decision + Report + Review
 ```
 
-## Phase 0: Product Contract Freeze
+---
 
-## Goal
-
-Convert the current product design into implementation-ready contracts.
-
-## Deliverables
-
-- Final `config.toml` schema.
-- JSON Schema for annotation cards.
-- JSON Schema for reference manifests.
-- JSON Schema for reproducibility records.
-- JSON Schema for review table import/export.
-- LLM input/output contract.
-- First demo dataset selected.
-- First reference strategy selected.
-
-## Key Decisions
-
-- MVP input format: `.h5ad`.
-- MVP annotation unit: cluster-level decisions.
-- MVP evidence sources: markers plus one lightweight model/reference source.
-- MVP report format: multi-page Quarto HTML.
-- MVP finalization: draft run followed by human review and `finalize`.
-
-## Exit Criteria
+## Implementation Status Key
 
 ```text
-We can describe every MVP output file before writing code.
+✅ Complete
+🔄 In progress / partial
+🔲 Planned
+⏸  Deferred
 ```
 
-## Phase 1: Repository and Runtime Foundation
+---
 
-## Goal
+## Phase 0: Product Contract Freeze — ✅ Complete
 
-Set up a reproducible development and execution environment.
+Decisions made and locked:
 
-## Deliverables
+- MVP input format: `.h5ad`.
+- Annotation unit: cluster-level decisions.
+- Evidence sources: markers + CellTypist + local reference + builtin DB.
+- Report format: 2-file static HTML (`report.html` + `review.html`).
+- Finalization: draft run → human review → `finalize`.
+- LLM: explain-only, never decides.
 
-- Pixi-based project setup.
-- Python package skeleton.
-- CLI entry point.
-- Test framework.
-- Basic logging.
-- Version command.
-- `scaudit doctor`.
-- Project documentation skeleton.
+---
 
-## CLI Commands
+## Phase 1: Repository and Runtime Foundation — ✅ Complete
 
 ```bash
 scaudit --help
@@ -74,639 +48,326 @@ scaudit version
 scaudit doctor
 ```
 
-## Engineering Requirements
+Pixi-based environment, typed models, lazy optional imports, test framework.
 
-- Use typed internal models for contracts.
-- Validate JSON outputs.
-- Keep optional dependencies lazy-loaded.
-- Keep Quarto and LLM optional at first.
+---
 
-## Exit Criteria
-
-```text
-Users can install the local package, run scaudit doctor, and see environment capability checks.
-```
-
-## Phase 2: Config and Dataset Diagnosis
-
-## Goal
-
-Allow users to create, validate, and inspect a run configuration before expensive computation.
-
-## Deliverables
-
-- `scaudit init-config`.
-- `scaudit validate`.
-- `scaudit plan`.
-- `.h5ad` reader.
-- Dataset metadata detection.
-- Cluster key validation.
-- Gene ID type detection.
-- Basic QC metadata summary.
-- Resolved config export.
-
-## CLI Commands
+## Phase 2: Config and Dataset Diagnosis — ✅ Complete
 
 ```bash
-scaudit init-config input.h5ad --format toml --out config.toml
+scaudit init-config input.h5ad --out config.toml
 scaudit validate config.toml
 scaudit plan config.toml
+scaudit diagnose input.h5ad --cluster-key leiden
 ```
 
-## Outputs
+Outputs: `config.resolved.toml`, `diagnosis.json` (includes UMAP coords when available).
 
-```text
-results/config.resolved.toml
-results/diagnosis.json
-```
+---
 
-## Exit Criteria
+## Phase 3: Evidence Schema and Marker Evidence — ✅ Complete
 
-```text
-A user can generate and validate config.toml for a real .h5ad without running annotation.
-```
+- `ClusterEvidence` dataclass with `markers`, `celltypist_label`, `reference_matches`.
+- `MarkerGene` with `gene`, `score`, `log2fc`, `pval_adj`.
+- Scanpy Wilcoxon DE via `rank_genes_groups`, top 20 per cluster.
+- `compute_cluster_evidence()` pipeline.
 
-## Phase 3: Evidence Schema and Marker Evidence
+Outputs: `annotation_cards.json`, `annotation_summary.csv`, `review_table.csv`.
 
-## Goal
+---
 
-Build the first real evidence layer using marker genes.
-
-## Deliverables
-
-- Annotation card builder.
-- Marker evidence adapter using Scanpy.
-- Cluster marker ranking.
-- Marker evidence tables.
-- Basic confidence categories.
-- Initial decision placeholder.
-
-## Outputs
-
-```text
-annotation_cards.json
-marker_evidence.csv
-annotation_summary.csv
-```
-
-## Exit Criteria
-
-```text
-For every cluster, scaudit produces a valid annotation card with marker evidence.
-```
-
-## Phase 4: Reference Registry MVP
-
-## Goal
-
-Support reproducible reference metadata without requiring users to manually write full manifests.
-
-## MVP Scope
-
-Start with:
-
-- Local custom references.
-- Small built-in registry or fixture registry.
-- Reference add/list/use.
-
-Defer:
-
-- Full public database download.
-- Automatic CELLxGENE integration.
-- Complex reference embedding search.
-
-## CLI Commands
+## Phase 4: Reference Registry MVP — ✅ Complete
 
 ```bash
-scaudit reference add my_ref.h5ad --id my_ref --species mouse --tissue heart --label-key cell_type
+scaudit reference add ref.h5ad --id my_ref --species mouse --tissue heart --label-key cell_type
 scaudit reference list
 scaudit reference use my_ref --config config.toml
 ```
 
-## Outputs
+Outputs: `references/registry.json`, `references/<id>/manifest.json`.
+
+---
+
+## Phase 5: Builtin Marker DB — ✅ Complete
+
+~60 curated cell-type gene sets across immune, epithelial, stromal, cardiac, neural lineages.
+Jaccard-based label proposal. Works offline, no model weights.
+
+`lookup_cell_type(query_genes)` → sorted matches with `{ref_id, label, jaccard, n_shared}`.
+
+---
+
+## Phase 6: Model Evidence (CellTypist) — ✅ Complete
+
+Majority-vote per cluster. Auto-skipped if `celltypist` not installed.
+Result stored as `{model: "CellTypist", label: ..., probability: ...}` in each card's `evidence.models`.
+
+---
+
+## Phase 7: Reference h5ad Matching — ✅ Complete
+
+For each registered reference, Wilcoxon DE is computed and Jaccard similarity is measured
+between query cluster marker sets and reference cell-type marker sets.
+Top 5 matches stored per cluster.
+
+---
+
+## Phase 8: Decision Engine — ✅ Complete
+
+Rule-based engine in `_assign_annotation()`:
 
 ```text
-references/registry.json
-references/<id>/manifest.json
-reference_audit.json
+Artifact warning  → cell_count < 10
+Accepted          → overall==high, proposed_label set, no contradictions
+Ambiguous         → evidence sources disagree on label
+Needs review      → default when evidence is incomplete or moderate
 ```
 
-## Exit Criteria
+Confidence levels `{lineage, subtype, overall}` derived from marker strength,
+CellTypist probability, and reference Jaccard.
+
+---
+
+## Phase 9: LLM Reasoning Layer — ✅ Complete (optional)
+
+`scaudit.llm.enrich_cards_with_llm()` calls Claude Haiku with structured evidence
+to produce a ≤60-word grounded narrative per cluster.
+
+Rules enforced in system prompt:
+- No invented genes, references, or biological claims.
+- No override of evidence-based decision or confidence.
+- Uncertainty is stated explicitly.
+
+Requires `anthropic` SDK and `ANTHROPIC_API_KEY`. Silently skipped otherwise.
+Pass `--no-llm` to disable on the CLI.
+
+---
+
+## Phase 10: 2-File Static HTML Report — ✅ Complete
+
+Replaced Quarto with pure-Python HTML generation. No Quarto dependency.
 
 ```text
-Users can register a local reference and have config.toml refer to it by ID.
+report/
+├── report.html   # Audit view: hero, metrics, Plotly UMAP, attention panel, cluster cards
+└── review.html   # Review worksheet: editable dropdowns + CSV download
 ```
 
-## Phase 5: First Model or Reference Evidence
+Each cluster card includes:
+- Decision badge + confidence row (lineage / subtype / overall).
+- Evidence block: marker gene list, marker DB matches, external references, model predictions.
+- Reasoning block: supports (green), contradictions (orange), uncertainties (grey), suggestions (blue).
+- Uses real `adata.obsm['X_umap']` when available; deterministic placeholder layout otherwise.
 
-## Goal
+---
 
-Add a second evidence source so scaudit can compare marker evidence against model/reference evidence.
+## Phase 11: Annotate Command — ✅ Complete
 
-## Recommended MVP Path
+Single-command workflow matching the MVP user story:
 
-Use CellTypist if dependency resolution is manageable. If not, define a model adapter interface and start with a simple reference or mock adapter for integration tests.
-
-## Deliverables
-
-- Model evidence adapter interface.
-- CellTypist adapter or first lightweight model adapter.
-- Per-cell predictions.
-- Cluster-level aggregation.
-- Model evidence table.
-- Model-marker agreement summary.
-
-## Outputs
-
-```text
-model_predictions.csv
-model_evidence.json
+```bash
+scaudit annotate input.h5ad \
+  --cluster-key leiden \
+  --species mouse \
+  --tissue heart \
+  --out results/ \
+  [--no-llm]
 ```
 
-## Exit Criteria
+Internally creates a temporary config and delegates to `prepare_run()`.
 
-```text
-Each cluster has marker evidence plus one independent model/reference evidence source.
-```
+---
 
-## Phase 6: Decision Engine MVP
-
-## Goal
-
-Convert evidence into conservative decision states.
-
-## Deliverables
-
-- Rule-based decision engine.
-- Accepted / Ambiguous / Unknown / Needs review / Artifact warning states.
-- Lineage-over-subtype preference.
-- Conflict detection.
-- Warning propagation.
-- Review priority scoring.
-
-## Exit Criteria
-
-```text
-Every cluster receives a proposed label, decision state, confidence category, and review priority.
-```
-
-## Phase 7: Quarto Report MVP
-
-## Goal
-
-Generate the first polished multi-page HTML audit report.
-
-## MVP Pages
-
-```text
-report/index.html
-report/annotation.html
-report/clusters/index.html
-report/clusters/cluster_<id>.html
-report/methods.html
-report/reproducibility.html
-```
-
-## Deliverables
-
-- Quarto source generator.
-- Report theme.
-- Summary metrics.
-- Annotation summary table.
-- Cluster detail pages.
-- Marker/model evidence sections.
-- Reproducibility appendix.
-
-## Exit Criteria
-
-```text
-A collaborator can open report/index.html and understand what was assigned, why, and what needs review.
-```
-
-## Phase 8: Review and Finalize
-
-## Goal
-
-Separate draft annotation from final annotation.
-
-## Deliverables
-
-- `review_table.csv`.
-- Review import validation.
-- Final annotation card generation.
-- Final `.h5ad` writer.
-- Final report generation.
-- Review audit record.
-
-## CLI Commands
+## Phase 12: Review and Finalize — ✅ Complete
 
 ```bash
 scaudit review import results/review_table.csv --run results/
 scaudit finalize results/ --out final/
 ```
 
-## Final Outputs
+Outputs: `final_annotation_cards.json`, `final_annotation_summary.csv`, `review_audit.json`.
 
-```text
-final/annotated.h5ad
-final/final_annotation_cards.json
-final/final_annotation_summary.csv
-final/review_audit.json
-final/reproducibility.json
-final/report/index.html
-```
+---
 
-## MVP Exit Criteria
+## MVP Exit Criteria — ✅ Met
 
-The MVP is complete when this full path works:
+The full path works end-to-end:
 
 ```bash
-scaudit init-config input.h5ad --format toml --out config.toml
-scaudit validate config.toml
-scaudit plan config.toml
+scaudit annotate input.h5ad --cluster-key leiden --out results/
+# or
 scaudit run config.toml
+
 scaudit review import results/review_table.csv --run results/
 scaudit finalize results/ --out final/
 ```
 
-And produces:
+---
+
+# Post-MVP Roadmap
+
+## Phase 13: Gene Harmonization — 🔲 Planned
+
+Critical production layer. Required before cross-dataset references are reliable.
+
+- Gene symbol normalization (case, aliases).
+- Ensembl-to-symbol mapping.
+- Mouse ↔ human ortholog mapping (one-to-one only by default).
+- Missing gene fraction reporting per cluster.
+- Gene overlap diagnostic in `diagnosis.json` and report.
 
 ```text
-draft report
-review table
-final annotated.h5ad
-final report
-reproducibility record
+WARNING: 22% of query genes not found in reference mouse_heart_v1.
+Fix: check gene_id_type in reference manifest (currently 'ensembl', query is 'symbol').
 ```
 
-# Post-MVP: Mature Scientific Product
+---
 
-## Phase 9: Better Evidence and Calibration
+## Phase 14: QC Evidence Layer — 🔲 Planned
 
-## Goals
+Integrate per-cluster QC metrics as an explicit evidence type.
 
-- Improve evidence reliability.
-- Reduce false confidence.
-- Make disagreement more informative.
+- `n_counts`, `n_genes`, `pct_counts_mt` per cluster (mean ± std).
+- Flags: low gene count, high MT fraction, low total counts.
+- Populate `evidence.qc_warnings` in each annotation card.
+- Artifact-warning logic should use QC flags, not only cell count.
+- Optional integration with Scrublet scores.
 
-## Features
+---
 
-- Better gene harmonization.
-- Reference gene overlap diagnostics.
-- Reference bias detection.
-- Score calibration and rank-based evidence categories.
-- Model disagreement views.
-- Batch effect detection.
-- Artifact warnings.
+## Phase 15: Annotated h5ad Output — 🔲 Planned
 
-## Exit Criteria
+Write final labels back to `.h5ad`:
 
-```text
-The report clearly distinguishes strong evidence, weak evidence, and conflicting evidence.
+```python
+adata.obs["scaudit_label"] = ...
+adata.obs["scaudit_decision"] = ...
+adata.obs["scaudit_confidence"] = ...
+adata.uns["scaudit"] = reproducibility_record
 ```
 
-## Phase 10: Public Reference Ecosystem
-
-## Goals
-
-- Make reference discovery useful and reproducible.
-- Reduce setup burden for users.
-
-## Features
-
-- `reference search`.
-- `reference recommend`.
-- `reference download`.
-- `reference update`.
-- Public registry metadata.
-- Version pinning.
-- Checksums.
-- Reference cache management.
-
-## Supported Sources
-
-Potential sources:
-
-- CELLxGENE.
-- Human Cell Atlas.
-- Tabula Sapiens.
-- Curated project-specific registries.
-
-## Exit Criteria
-
-```text
-Users can discover, download, pin, and audit public references without manually editing manifests.
+```bash
+scaudit finalize results/ --out final/ --write-h5ad
 ```
 
-## Phase 11: LLM Reasoning Layer
+Output: `final/annotated.h5ad`.
 
-## Goals
+---
 
-- Add high-quality explanation without making the LLM a decision-maker.
+## Phase 16: Public Reference Ecosystem — 🔲 Planned
 
-## Features
+Reduce friction for reference discovery and download.
 
-- Evidence-grounded LLM prompts.
-- JSON output parsing.
-- Hallucination guardrails.
-- Explanation sections in cluster pages.
-- Validation suggestions.
-- Optional provider support.
-
-## Exit Criteria
-
-```text
-LLM explanations improve readability but no decision depends exclusively on LLM output.
+```bash
+scaudit reference search --species mouse --tissue heart
+scaudit reference download tabula_muris_heart --version 2024
+scaudit reference update mouse_heart_v1
 ```
 
-## Phase 12: Richer Reports
+Potential sources: CELLxGENE, Human Cell Atlas, Tabula Sapiens, Tabula Muris.
 
-## Goals
+Requires: version pinning, checksums, cache management.
 
-- Make the report feel premium, navigable, and publication-ready.
+---
 
-## Features
+## Phase 17: Richer Report — 🔲 Planned
 
-- Full multi-page report architecture.
-- Interactive Plotly UMAPs.
-- Evidence heatmaps.
-- Reference audit dashboard.
-- Uncertainty dashboard.
-- Condition comparison pages.
-- Export-ready PNG/SVG/PDF figures.
-- Methods auto-generation.
-- Data package export.
+Improvements to the existing 2-file HTML report:
 
-## Exit Criteria
+- Per-cluster marker dot plots (Plotly heatmap).
+- Reference match visualization (Jaccard heatmap across clusters × cell types).
+- Evidence completeness summary (which clusters have all evidence sources vs. gaps).
+- `methods.html` auto-generated from actual run config.
+- `reproducibility.html` rendering `reproducibility.json`.
+- UMAP color toggles: by decision, by confidence, by proposed label.
+- Click on UMAP cluster → jump to card.
 
-```text
-The report can be shared with collaborators, reviewers, or core facility clients as a polished deliverable.
-```
+---
 
-## Phase 13: Advanced Annotation Features
+## Phase 18: `scaudit debug` Command — 🔲 Planned
 
-## Goals
-
-- Support deeper biological interpretation.
-
-## Features
-
-- Cell state vs cell type separation.
-- Novel cell candidate detection.
-- Cross-condition interpretation.
-- Functional evidence via decoupler.
-- Ontology-aware label consistency.
-- scVI/scANVI feature support.
-- Optional foundation model embeddings.
-
-## Exit Criteria
-
-```text
-scaudit can support serious biological interpretation beyond first-pass labels.
-```
-
-# Industry-Level Product
-
-## Phase 14: Robust Engineering and Scale
-
-## Goals
-
-- Make scaudit reliable on larger datasets and team workflows.
-
-## Features
-
-- Caching.
-- Parallel execution.
-- Resume failed runs.
-- Structured logs.
-- Debug command.
-- Run manifest.
-- Output validation.
-- Performance benchmarks.
-- Large dataset memory strategy.
-
-## CLI Commands
+Focused per-cluster evidence panel in the terminal:
 
 ```bash
 scaudit debug --run results/ --cluster 7
-scaudit cache list
-scaudit cache clean
-scaudit report results/
 ```
 
-## Exit Criteria
+Shows: decision path, evidence table, top markers, model predictions, reference matches, uncertainty scores.
 
-```text
-Large runs are debuggable, resumable, and reproducible.
+---
+
+## Phase 19: Batch Effect Detection — 🔲 Planned
+
+- Detect whether `sample` or `batch` key explains significant variance.
+- Warn when reference condition (healthy) differs from query condition (disease/tumor).
+- Recommend scVI-based correction when batch effect is strong.
+
+---
+
+## Phase 20: Better Ensemble Logic — 🔲 Planned
+
+Current decision engine uses simple rank-based averaging. Future improvements:
+
+- Calibration layer: normalize CellTypist and reference scores to comparable ranges.
+- Weighted voting with configurable source weights.
+- Hierarchical fallback: if subtype disagrees, fall back to lineage-level label.
+- Novel cell detection: low reference similarity + high internal consistency + distinct markers.
+
+---
+
+## Phase 21: Cell State Separation — 🔲 Planned
+
+Separate cell type (identity) from cell state (activity/condition).
+
+```json
+{
+  "cell_type": "Cardiomyocyte",
+  "cell_state": "stress_response",
+  "state_evidence": ["NPPA", "NPPB", "HSPA1A"]
+}
 ```
 
-## Phase 15: Quality System
+Potential method: NMF or gene program scoring (decoupler).
 
-## Goals
+---
 
-- Make the product reliable enough for teams and regulated-ish environments.
+## Phase 22: Condition Comparison — 🔲 Planned
 
-## Features
+When `condition_key` is provided:
 
-- Schema validation everywhere.
-- Golden demo datasets.
-- Snapshot tests for reports.
-- End-to-end workflow tests.
-- Reproducibility tests.
-- Dependency lock validation.
-- CI test matrix.
-- Clear error taxonomy.
-- Backward-compatible schema versions.
+- Cell type abundance differences across conditions.
+- Marker program differences per condition.
+- UMAP split by condition.
+- `comparison.html` in the report.
 
-## Exit Criteria
+---
 
-```text
-Every release can prove that outputs remain valid and reproducible across supported demo datasets.
-```
+## Phase 23: Scale and Performance — 🔲 Planned (Post-MVP)
 
-## Phase 16: Team and Server Mode
+- Per-cluster parallelization for marker evidence.
+- Cached reference marker sets (skip re-computing DE for unchanged references).
+- Resume failed runs.
+- Structured logs to `results/logs/scaudit.log`.
+- Memory-aware h5ad loading for datasets >500k cells.
 
-## Goals
+---
 
-- Support shared compute and team review workflows.
+## Phase 24: Web App and Team Mode — ⏸ Deferred
 
-## Features
-
-- Optional server execution.
-- GPU worker support.
-- Job queue.
+- Browser-based review UI (no CSV editing).
 - Shared reference registry.
-- Shared run storage.
 - Team review state.
-- Authentication if needed.
-- Audit logs.
-
-## Exit Criteria
-
-```text
-A lab or core facility can run scaudit for multiple projects with shared references and review workflows.
-```
-
-## Phase 17: Web App
-
-## Goals
-
-- Provide a polished interactive interface for review, exploration, and collaboration.
-
-## Features
-
-- Upload/select run.
-- Browse report pages.
-- Interactive cluster review.
-- Edit labels.
-- Compare versions.
-- Export final `.h5ad`.
-- Manage references.
-- Manage configs.
-
-## Exit Criteria
-
-```text
-Non-command-line users can review and finalize annotations without editing CSV files.
-```
-
-## Phase 18: Enterprise and Platform Capabilities
-
-## Goals
-
-- Make scaudit suitable for institutional or commercial deployment.
-
-## Features
-
-- Project workspace model.
-- Role-based access.
 - Run provenance database.
 - API.
-- Batch processing.
-- Integration with object storage.
-- Integration with workflow engines.
-- Compliance-friendly audit logs.
-- Long-term reference/version management.
-- Report branding for organizations.
 
-## Exit Criteria
+---
 
-```text
-scaudit can be deployed as a managed annotation audit platform for organizations.
-```
+## Risk Register
 
-# Recommended Build Order
-
-## Must Build First
-
-```text
-1. Contracts and schemas
-2. Config validation
-3. Marker evidence
-4. Annotation cards
-5. Draft report
-6. Review table
-7. Finalize command
-```
-
-## Build Soon After
-
-```text
-1. Local reference registry
-2. Model adapter
-3. Decision engine
-4. Better report theme
-5. Reproducibility records
-```
-
-## Build Later
-
-```text
-1. Public reference download
-2. LLM explanations
-3. scVI/scANVI
-4. Condition comparison
-5. Web app
-```
-
-## Avoid Early
-
-```text
-1. Full foundation model integration
-2. Live report editing UI
-3. Complex server infrastructure
-4. Too many public databases
-5. Over-precise confidence scores
-```
-
-# Product Maturity Levels
-
-## Prototype
-
-```text
-Can produce annotation_cards.json for one demo dataset.
-```
-
-## MVP
-
-```text
-Can run draft audit, produce report, import review, and finalize annotated.h5ad.
-```
-
-## Mature Scientific Tool
-
-```text
-Can support multiple datasets, references, evidence sources, polished reports, and reproducible publication workflows.
-```
-
-## Industry-Level Product
-
-```text
-Can support teams, shared infrastructure, scalable execution, versioned audit logs, web review, and managed deployment.
-```
-
-# Biggest Risks
-
-## Scope Risk
-
-Trying to build the mature product before the MVP.
-
-## Scientific Risk
-
-Producing polished reports that overstate weak evidence.
-
-## Engineering Risk
-
-Letting schema and output formats drift without validation.
-
-## UX Risk
-
-Making users manage too much reference metadata manually.
-
-## LLM Risk
-
-Allowing explanations to become hidden decisions.
-
-# Recommended Next Step
-
-Start implementation only after converting the five development contracts into concrete schemas:
-
-```text
-annotation_card.schema.json
-reference_manifest.schema.json
-reproducibility.schema.json
-review_table.schema.json
-llm_output.schema.json
-```
-
-Then build the first vertical slice:
-
-```text
-config.toml
--> validate
--> marker evidence
--> annotation cards
--> minimal report
--> review table
--> finalize
-```
+| Risk | Mitigation |
+|---|---|
+| Scope creep before MVP is stable | Phase gate: don't add post-MVP features until annotate → review → finalize is solid on real datasets |
+| Gene ID mismatch silently corrupts reference matching | Phase 13 gene harmonization — flag and report mismatches explicitly |
+| LLM explanations overstate confidence | System prompt enforces evidence grounding; LLM output never touches `decision` field |
+| Report becomes unreadable with many clusters | Add filtering/search to cluster card list; paginate beyond ~50 clusters |
+| CellTypist model drift between versions | Pin model version in `reproducibility.json` |

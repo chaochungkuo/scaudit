@@ -89,9 +89,8 @@ class CliTests(unittest.TestCase):
             self.assertTrue((output_dir / "config.resolved.toml").exists())
             self.assertTrue((output_dir / "annotation_cards.json").exists())
             self.assertTrue((output_dir / "review_table.csv").exists())
-            self.assertTrue((output_dir / "report" / "index.html").exists())
-            self.assertTrue((output_dir / "report" / "annotation.html").exists())
-            self.assertTrue((output_dir / "report" / "clusters" / "index.html").exists())
+            self.assertTrue((output_dir / "report" / "report.html").exists())
+            self.assertTrue((output_dir / "report" / "review.html").exists())
 
     def test_build_annotation_cards_from_cluster_sizes(self) -> None:
         cards = build_annotation_cards({"cluster_sizes": {"0": 10, "1": 12}})
@@ -119,7 +118,7 @@ class CliTests(unittest.TestCase):
             self.assertTrue((final_dir / "final_annotation_cards.json").exists())
             self.assertTrue((final_dir / "final_annotation_summary.csv").exists())
             self.assertTrue((final_dir / "review_audit.json").exists())
-            self.assertTrue((final_dir / "report" / "index.html").exists())
+            self.assertTrue((final_dir / "report" / "report.html").exists())
 
     def test_review_import_writes_audit(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -143,6 +142,38 @@ class CliTests(unittest.TestCase):
 
             self.assertTrue((temp_path / "results" / "reviewed_review_table.csv").exists())
             self.assertTrue((temp_path / "results" / "review_audit.json").exists())
+
+    def test_annotate_command_writes_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            input_path = temp_path / "input.h5ad"
+            input_path.write_text("placeholder", encoding="utf-8")
+            output_dir = temp_path / "annotated"
+            with redirect_stdout(io.StringIO()):
+                main(
+                    [
+                        "annotate",
+                        str(input_path),
+                        "--cluster-key",
+                        "leiden",
+                        "--out",
+                        str(output_dir),
+                        "--no-llm",
+                    ]
+                )
+            self.assertTrue((output_dir / "annotation_cards.json").exists())
+            self.assertTrue((output_dir / "review_table.csv").exists())
+            self.assertTrue((output_dir / "report" / "report.html").exists())
+
+    def test_marker_db_lookup(self) -> None:
+        from scaudit.markers import lookup_cell_type
+
+        matches = lookup_cell_type({"CD3D", "CD3E", "CD8A", "CD8B", "GZMB"})
+        self.assertTrue(len(matches) > 0)
+        top = matches[0]
+        self.assertIn("label", top)
+        self.assertIn("jaccard", top)
+        self.assertGreater(top["jaccard"], 0)
 
     def test_reference_add_and_use(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,365 +1,257 @@
-# Critical Gaps and Design Blind Spots
+# Critical Gaps and Known Limitations
 
-This document captures important design gaps that should be resolved before implementation. These issues determine whether scaudit becomes a basic annotation tool or a robust single-cell annotation operating system.
+This document tracks important production gaps and design limitations.
+Items marked ✅ have been addressed; items marked 🔲 are still open.
 
-## Summary
-
-scaudit already has a strong architecture around CLI, evidence, references, LLM reasoning, Quarto reporting, and reproducible outputs. The remaining critical work is to define the hidden production layers:
-
-- Feature and gene identifier harmonization.
-- Reference bias and versioning.
-- Calibration and ensemble decision logic.
-- LLM boundaries and hallucination guards.
-- Debugging, caching, and reproducibility infrastructure.
-- Scientific interpretation layers such as novel cell detection and cell state separation.
+---
 
 ## 1. Core Algorithm Layer
 
-### 1.1 Gene ID / Feature Harmonization
+### 1.1 Gene ID / Feature Harmonization — 🔲 Highest priority
 
-Different datasets may use inconsistent gene identifiers:
+Different datasets use inconsistent gene identifiers:
 
 ```text
 - Ensembl ID vs gene symbol
 - Mouse vs human orthologs
-- Inconsistent gene filtering
+- Inconsistent filtering
 ```
 
-If this layer is missing, reference mapping can fail or become misleading.
+**Current state**: scaudit assumes symbols throughout. If a reference uses Ensembl IDs
+and the query uses symbols, Jaccard will be 0 and no reference matches will be found —
+silently, with no warning.
 
-scaudit needs a gene mapping layer:
+**What's needed**:
+- Gene symbol normalization (case, aliases).
+- Ensembl-to-symbol mapping.
+- Mouse ↔ human ortholog table (one-to-one only by default).
+- Gene overlap fraction reported per reference pair.
+- Warning when overlap < 50%: `"Only 31% of query genes found in reference; results may be unreliable."`
 
-```text
-- Gene symbol normalization
-- Ortholog mapping, especially mouse <-> human
-- Missing gene handling
-- Explicit record of gene matching statistics
+See roadmap Phase 13.
+
+---
+
+### 1.2 QC Evidence Layer — 🔲
+
+Many `Artifact warning` and `Needs review` decisions involve QC signals, but scaudit
+currently only flags clusters with < 10 cells. No per-cluster QC metrics are computed.
+
+**What's needed**:
+- Per-cluster mean ± std for `n_counts`, `n_genes_by_counts`, `pct_counts_mt`.
+- Populate `evidence.qc_warnings` when values are outliers.
+- Integrate Scrublet or DoubletFinder scores if present in `.obs`.
+
+See roadmap Phase 14.
+
+---
+
+### 1.3 Annotated `.h5ad` Output — 🔲
+
+`scaudit finalize` writes JSON and CSV outputs but does not write labels back to `.h5ad`.
+
+**What's needed**:
+```python
+adata.obs["scaudit_label"] = ...
+adata.obs["scaudit_decision"] = ...
+adata.obs["scaudit_confidence"] = ...
+adata.uns["scaudit"] = reproducibility_record
 ```
 
-This is one of the first major production pitfalls.
+See roadmap Phase 15.
 
-### 1.2 Cell-Level vs Cluster-Level Decisions
-
-The annotation unit must be explicit:
-
-```text
-- Cell-level annotation is noisy.
-- Cluster-level annotation is more stable.
-```
-
-Recommended principle:
-
-```text
-Compute at cell level, decide at cluster level.
-```
-
-Cell-level evidence can be aggregated into cluster-level decisions, reducing instability while preserving detailed signal.
-
-### 1.3 Doublet / Low-Quality Cell Detection
-
-Many unknown or ambiguous clusters may actually represent artifacts:
-
-```text
-- Doublets
-- Dying cells
-- Ambient RNA
-- Low-quality cells
-```
-
-scaudit should integrate QC warnings and possibly doublet detection concepts such as Scrublet or DoubletFinder.
-
-Without this layer, artifacts may be misinterpreted as biological novelty.
+---
 
 ## 2. Reference System
 
-### 2.1 Reference Bias Detection
+### 2.1 Reference Bias Detection — 🔲
 
-Reference selection alone is not enough. scaudit also needs to detect whether a selected reference is biased relative to the query.
+A selected reference may be systematically mismatched to the query.
 
-Example:
+Example: reference is healthy tissue, query is tumor tissue.
 
-```text
-Reference: healthy tissue
-Query: tumor tissue
-```
+**What's needed**:
+- Metadata comparison: species, tissue, condition, technology.
+- Warning when query condition differs from reference condition.
+- Gene overlap fraction as a proxy for compatibility.
+- Report a reference bias warning in the report's attention panel.
 
-This can introduce systematic mismatch.
+---
 
-Expected output:
+### 2.2 Reproducibility: Input Hash and Reference Versions — 🔄 Partial
 
-```text
-Reference bias warning:
-Query dataset differs from reference condition (tumor vs healthy).
-```
+`reproducibility.json` currently records scaudit version, Python version, and timestamp.
+`input_hash` is `null`. CellTypist model version is not recorded.
 
-### 2.2 Reference Versioning
+**What's needed**:
+- SHA-256 hash of input `.h5ad`.
+- CellTypist model name and version.
+- Reference checksums (already in manifest schema, not yet computed).
 
-Annotation must record reference identity and version.
+---
 
-Example:
+### 2.3 Public Reference Discovery — 🔲
 
-```json
-{
-  "reference": "mouse_heart_atlas_v1",
-  "version": "2026-05-01",
-  "source": "cellxgene"
-}
-```
+Users must supply reference `.h5ad` files manually via `scaudit reference add`.
+There is no discovery, search, or download from public databases.
 
-Without versioning, results cannot be reproduced.
+See roadmap Phase 16.
+
+---
 
 ## 3. Model Layer
 
-### 3.1 Batch Effect Detection
-
-scaudit should distinguish batch effect detection from batch correction.
-
-Important question:
-
-```text
-When should batch correction be recommended?
-```
-
-Example UX:
-
-```text
-Batch detected: sample explains 35% variance.
-Recommendation: run scVI-based correction or model-aware annotation.
-```
-
-### 3.2 Model Calibration
+### 3.1 Model Calibration — 🔲
 
 Scores from different models are not directly comparable:
-
 ```text
-CellTypist 0.8 != scANVI 0.8
+CellTypist 0.8 ≠ scANVI 0.8
 ```
 
-scaudit needs score normalization or calibration before evidence fusion.
+**Current state**: CellTypist probability (majority-vote fraction) is used directly.
+When additional models are added, calibration will be needed before evidence fusion.
 
-Without calibration, model voting can become misleading.
+---
 
-### 3.3 Ensemble Strategy
+### 3.2 Ensemble Strategy — 🔄 Rule-based only
 
-Decision behavior must be defined when methods disagree.
+Current decision logic is rule-based (single model, no weighted voting).
+When multiple models produce conflicting signals, the decision is `Ambiguous`.
 
-Example:
+**What's needed for Phase 20**:
+- Weighted voting across models.
+- Hierarchical fallback to lineage when subtype disagrees.
+- Configurable source weights in `config.toml`.
 
-```text
-CellTypist = T cell
-scANVI = NK cell
-```
+---
 
-The system needs explicit rules:
+### 3.3 Batch Effect Detection — 🔲
 
-```text
-- Voting
-- Weighted voting
-- Evidence override
-- Hierarchical fallback
-- Ambiguous decision when conflict remains unresolved
-```
+scaudit does not detect whether batch/sample explains significant variance.
+
+**What's needed**:
+- Check whether `sample` or `batch` key (if present) correlates with UMAP structure.
+- Warn when batch explains a large fraction of cluster separation.
+- Recommend scVI-based correction when batch effect is strong.
+
+---
 
 ## 4. LLM Layer
 
-### 4.1 Prompt Design
+### 4.1 Prompt Robustness — 🔄 Basic guardrails in place
 
-LLM input should be structured evidence, not raw data.
+The current system prompt includes prohibitions against inventing evidence or overriding
+decisions. However, there is no automated check that the LLM output complies.
 
-Example:
+**What's needed**:
+- Post-processing check: does the output contain gene names not in the evidence?
+- Confidence-hedging audit: does the summary overstate evidence strength?
+- Fallback to rule-based summary when LLM is unavailable or output fails checks.
 
-```json
-{
-  "markers": [],
-  "reference": {},
-  "model_predictions": {},
-  "uncertainty": {}
-}
-```
+---
 
-### 4.2 Hallucination Guard
+### 4.2 LLM Model Pinning — 🔲
 
-The LLM must not invent evidence.
+The model ID (`claude-haiku-4-5-20251001`) is hardcoded. If the model is deprecated,
+runs will fail silently or produce degraded output.
 
-Explicit restrictions:
+**What's needed**:
+- Record LLM model ID in `reproducibility.json`.
+- Allow override via config or environment variable.
 
-```text
-LLM cannot:
-- Invent marker genes
-- Invent references
-- Invent biological claims not present in the evidence
-- Override evidence-based decisions
-```
-
-Allowed behavior:
-
-```text
-LLM can:
-- Summarize provided evidence
-- Explain contradictions
-- Suggest validation based on explicit evidence
-- State uncertainty clearly
-```
-
-### 4.3 Explain vs Decide Boundary
-
-The LLM is an explanation layer, not a decision engine.
-
-Enforcement rule:
-
-```text
-LLM cannot override evidence decision.
-```
+---
 
 ## 5. System Engineering Layer
 
-### 5.1 Logging and Debug System
+### 5.1 No Structured Logging — 🔲
 
-Users will need to inspect specific decisions.
+No log file is written. Errors from optional evidence steps (CellTypist, reference matching)
+are silently caught and discarded.
 
-Example command:
+**What's needed**:
+- Structured log file: `results/logs/scaudit.log`.
+- Warning entries for every caught exception in evidence computation.
+- `--verbose` flag for detailed terminal output.
 
-```bash
-scaudit debug --cluster 7
-```
+---
 
-Expected role:
+### 5.2 No Caching — 🔲
 
-```text
-Explain why cluster 7 received its label, including evidence, scores, references, model outputs, uncertainty, and decision path.
-```
+Each run re-reads the input `.h5ad`, re-computes all DE tests, and re-runs CellTypist.
+For large datasets (>100k cells) this is expensive.
 
-### 5.2 Cache System
+**What's needed**:
+- Cache reference DE results (skip if reference h5ad unchanged).
+- Cache CellTypist predictions (skip if input cells unchanged).
+- Cache marker results (skip if expression matrix unchanged).
 
-Reference mapping and model inference can be slow.
+---
 
-Likely cache targets:
+### 5.3 No `scaudit debug` Command — 🔲
 
-```text
-- Reference embeddings
-- Query embeddings
-- Model outputs
-- Marker results
-- LLM explanations
-```
+Users cannot inspect why a specific cluster received its decision from the terminal.
 
-### 5.3 Parallelization
+See roadmap Phase 18.
 
-Many operations can be parallelized:
+---
 
-```text
-- Per cluster
-- Per reference
-- Per model
-- Per output figure
-```
+### 5.4 Performance on Large Datasets — 🔲
 
-Without parallelization, large datasets may become too slow.
+`ad.read_h5ad(path)` in `compute_cluster_evidence()` loads the entire expression matrix
+into memory. For datasets >500k cells this may exceed available RAM.
+
+**Mitigation**: use `backed="r"` + subsample for marker computation, or defer to
+a chunked implementation.
+
+---
 
 ## 6. Scientific Interpretation Layer
 
-### 6.1 Novel Cell Detection
+### 6.1 Novel Cell Detection — 🔲
 
-Novel cell detection should be formalized.
+Clusters with low reference similarity + high internal consistency + distinct markers
+are likely biologically novel. scaudit does not currently flag these separately.
 
-Potential definition:
-
+**Proposed definition**:
 ```text
-Low reference similarity
-+ High internal consistency
-+ Distinct marker or gene program
-= Novel candidate
+best reference Jaccard < 0.05
++ ≥ 3 strong markers
++ no CellTypist match with probability > 0.6
+= potential novel cell type candidate
 ```
 
-This could become a paper-level differentiating feature.
+Assign `decision = "Novel candidate"` and surface in attention panel.
 
-### 6.2 State vs Cell Type Distinction
+---
 
-The system should separate cell type from cell state.
+### 6.2 Cell State vs Cell Type — 🔲
 
-Example:
+scaudit assigns a single `proposed_label` (cell type identity). Activated or stress states
+are not distinguished from the cell type itself.
 
-```text
-Cell type: cardiomyocyte
-State: stress_response
-```
+**What's needed**:
+- Gene program scoring (decoupler / NMF) to separate state from type.
+- Optional `cell_state` field in annotation card.
 
-This distinction is one of the hardest problems in annotation and should be represented explicitly.
+---
 
-### 6.3 Cross-Condition Interpretation
+### 6.3 Condition Comparison — 🔲
 
-WT vs mutant or condition comparisons should be formalized.
+When a `condition_key` is provided, scaudit currently ignores it.
 
-Potential outputs:
+**What's needed**:
+- Cell type abundance per condition.
+- Marker program differences between conditions.
+- Optional `comparison.html` in the report.
 
-```text
-- Delta abundance
-- Delta gene program
-- Delta cell state
-```
+---
 
-## 7. Output Layer
-
-### 7.1 Methods Auto-Generation
-
-scaudit can generate a paper-ready Methods section using Quarto templates.
-
-Expected output:
+## Top Priorities Before First Production Use
 
 ```text
-Methods section for publication or supplement.
-```
-
-### 7.2 Publication-Ready Figure Export
-
-Outputs should include static publication formats, not only interactive figures.
-
-Formats:
-
-```text
-PNG
-SVG
-PDF
-```
-
-### 7.3 Data Package Export
-
-scaudit should support a shareable export package.
-
-Example package contents:
-
-```text
-- annotated.h5ad
-- report.html
-- report.qmd
-- tables
-- figures
-- config
-- reproducibility.json
-```
-
-## Top Five Definitions Needed Before Coding
-
-Before implementation starts, the following five areas should be defined first:
-
-```text
-1. Gene ID harmonization
-2. Reference scoring function
-3. Evidence schema (JSON)
-4. Ensemble decision rule
-5. LLM boundary and forbidden behaviors
-```
-
-## Core Reframe
-
-scaudit is no longer only:
-
-```text
-an annotation tool
-```
-
-It is becoming:
-
-```text
-a single-cell annotation operating system
+1. Gene harmonization         — without it, reference matching is unreliable on real data
+2. QC evidence layer          — artifact detection needs more than cell count
+3. Annotated h5ad output      — users need labels written back to their dataset
+4. End-to-end test on real data — validate pipeline on a public dataset (e.g., Tabula Muris)
+5. Input file hash             — reproducibility requires it
 ```

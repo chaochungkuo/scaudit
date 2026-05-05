@@ -1,300 +1,296 @@
 # Methods
 
-This document captures a paper-style or technical white-paper style Methods section for scaudit. It formalizes the annotation task as evidence aggregation and decision-making rather than direct classification.
+Technical reference for scaudit's annotation pipeline. This doubles as a basis
+for a paper Methods section or supplement after light editing.
+
+---
 
 ## 1. Problem Formulation
 
-Given a single-cell RNA-seq dataset:
+Given a single-cell RNA-seq dataset with expression matrix:
 
 ```math
-X \in \mathbb{R}^{n \times p}
+X ∈ ℝ^{n × p}
 ```
 
-where `n` is the number of cells and `p` is the number of genes.
-
-Optional cluster labels are defined as:
+where `n` is cells and `p` is genes, with cluster labels:
 
 ```math
-c(i) \in \{1,\dots,K\}
+c(i) ∈ {1, …, K}
 ```
 
-for example Leiden clusters.
-
-The goal is to assign a cell type label to each cell or cluster `k`:
+The goal is to assign a cell type label to each cluster `k`:
 
 ```math
-y_k \in \mathcal{Y}
+ŷ_k ∈ Y
 ```
 
-while also producing an **interpretable and auditable evidence structure** `E_k` and a final decision `D_k`.
+while also producing an interpretable evidence structure `E_k` and a final decision `D_k`.
 
-We define annotation as a tuple:
+Annotation is formally a tuple:
 
 ```math
 A_k = (E_k, R_k, D_k)
 ```
 
-where:
+- `E_k`: multi-source evidence (markers, model, reference, DB).
+- `R_k`: reasoning trace (supports, contradictions, uncertainties).
+- `D_k`: final decision state.
 
-- `E_k`: multi-source evidence.
-- `R_k`: reasoning process.
-- `D_k`: final decision.
+---
 
-## 2. Data Preprocessing
+## 2. Dataset Diagnosis
 
-Input data is normalized and transformed:
+Before annotation, scaudit inspects the input `.h5ad`:
 
-```math
-X' = \log(1 + \mathrm{Normalize}(X))
-```
+- Cell count, gene count, available `.obs` keys.
+- Cluster key validation (is it present in `.obs`?).
+- Cluster sizes (per-cluster cell count).
+- UMAP coordinates: if `adata.obsm['X_umap']` exists, up to 500 cells per cluster
+  are sampled (seed=42) and stored in `diagnosis.json` for the interactive report.
 
-Highly variable genes are selected:
+Output: `diagnosis.json`.
 
-```math
-X^{HVG} = \mathrm{SelectHVG}(X')
-```
+---
 
-Dimensionality reduction is performed:
+## 3. Evidence Construction
 
-```math
-Z = \mathrm{PCA}(X^{HVG}) \in \mathbb{R}^{n \times d}
-```
-
-If needed, a neighborhood graph is constructed and clustering is performed:
+For each cluster `k`, scaudit builds a multi-source evidence set:
 
 ```math
-G = \mathrm{kNN}(Z), \quad c = \mathrm{Cluster}(G)
+E_k = {E_k^marker, E_k^DB, E_k^model, E_k^ref}
 ```
 
-## 3. Reference Selection
+### 3.1 Marker-Based Evidence
 
-Given metadata:
+One-vs-all Wilcoxon rank-sum test via `scanpy.tl.rank_genes_groups`:
 
 ```math
-m = (\mathrm{species}, \mathrm{tissue}, \mathrm{disease}, \mathrm{technology})
+Δ_{k,g} = log2FC(μ_{k,g} / μ_{¬k,g})
 ```
 
-scaudit selects a subset `\mathcal{R}^*` from a reference library `\mathcal{R}`.
+Top 20 genes ranked by Wilcoxon score. Strong markers: log2FC > 1.0, padj < 0.01.
+Moderate markers: log2FC > 0.5, padj < 0.05.
 
-For each reference `r \in \mathcal{R}`, define a scoring function:
+Each marker stored as `{gene, score, log2fc, pval_adj}`.
+
+### 3.2 Builtin Marker Database
+
+A curated set of ~60 cell types with known marker genes (human symbols).
+Jaccard similarity between the log2FC-filtered query gene set and each DB entry:
 
 ```math
-S(r \mid X) = \alpha S_{\mathrm{meta}} + \beta S_{\mathrm{gene}} + \gamma S_{\mathrm{embed}}
+J(Q_k, M_y) = |Q_k ∩ M_y| / |Q_k ∪ M_y|
 ```
 
-where:
+Matches with J ≥ 0.05 are stored, top 5 reported per cluster.
+Stored as `{ref_id: "builtin", label, jaccard, n_shared}`.
 
-- `S_meta`: metadata match, including species, tissue, and disease.
-- `S_gene`: gene overlap ratio.
-- `S_embed`: embedding similarity, for example PCA or scVI latent similarity.
+### 3.3 CellTypist Model Evidence
 
-Gene overlap is defined as:
+Per-cell probability predictions using `celltypist.annotate()` with majority voting.
+Cluster-level aggregation:
 
 ```math
-S_{\mathrm{gene}} = \frac{|G_X \cap G_r|}{|G_X|}
+ŷ_k^model = argmax_{y} (|{i ∈ k : P_model(y|i) is top}| / |k|)
 ```
 
-References are selected as:
+Top label and majority fraction stored as `{model: "CellTypist", label, probability}`.
+Skipped gracefully if `celltypist` is not installed.
+
+### 3.4 Local Reference h5ad Matching
+
+For each registered reference h5ad with known `label_key`:
+
+1. Wilcoxon DE computed per cell type in the reference.
+2. Jaccard similarity between query cluster markers (log2FC > 0.5, padj < 0.05)
+   and reference cell-type marker sets.
 
 ```math
-\mathcal{R}^* = \mathrm{Top}\text{-}k \{ S(r \mid X) \}
+J_ref(k, y) = |M_k ∩ M_y^ref| / |M_k ∪ M_y^ref|
 ```
 
-## 4. Evidence Construction
+Top 5 matches stored per cluster as `{ref_id, label, jaccard, n_shared}`.
 
-For each cluster `k`, scaudit constructs a multi-modal evidence set:
+---
+
+## 4. Confidence Assessment
+
+Confidence is assessed independently on three axes:
+
+| Axis | Source | High | Medium | Low |
+|---|---|---|---|---|
+| Lineage | Marker DE | ≥5 strong markers | ≥3 moderate | <3 moderate |
+| Subtype | Best reference Jaccard | J ≥ 0.20 | J ≥ 0.08 | J < 0.08 |
+
+CellTypist probability also informs an independent model confidence channel:
+probability ≥ 0.75 → high; ≥ 0.50 → medium; < 0.50 → low.
+
+Overall confidence is derived from the rank-weighted average:
 
 ```math
-E_k = \{ E_k^{\mathrm{marker}}, E_k^{\mathrm{ref}}, E_k^{\mathrm{model}}, E_k^{\mathrm{ontology}} \}
+overall_rank = mean({rank(lineage), rank(model), rank(subtype)})
 ```
 
-## 4.1 Marker-Based Evidence
+where rank: high=3, medium=2, low=1, unknown=0.
 
-Differential expression is computed as:
+---
 
-```math
-\Delta_{k,g} = \log \frac{\mu_{k,g} + \epsilon}{\mu_{\neg k,g} + \epsilon}
+## 5. Decision Rule
+
+The final decision is assigned as:
+
+```python
+if cell_count < 10:
+    decision = "Artifact warning"
+elif no evidence computed:
+    decision = "Needs review"
+elif CellTypist label != best reference label and both are present:
+    decision = "Ambiguous"
+elif overall == "high" and proposed_label is set:
+    decision = "Accepted"
+elif overall in ("medium", "high") and proposed_label is set:
+    decision = "Needs review"
+else:
+    decision = "Needs review"
 ```
 
-The top marker set is selected as:
+The decision states are:
 
-```math
-M_k = \{ g \mid \Delta_{k,g} > \tau \}
-```
+| Decision | Meaning |
+|---|---|
+| **Accepted** | Strong, consistent multi-source evidence |
+| **Ambiguous** | Evidence sources disagree on label |
+| **Needs review** | Default; incomplete or moderate evidence |
+| **Unknown** | No evidence — placeholder clusters |
+| **Artifact warning** | Too few cells or QC flags |
 
-Marker score is defined as:
-
-```math
-S_{\mathrm{marker}}(y \mid k) = \frac{1}{|M_y|} \sum_{g \in M_y} \mathbf{1}(g \in M_k)
-```
-
-## 4.2 Reference-Based Evidence
-
-The query embedding `Z` is projected into a reference latent space:
-
-```math
-Z_r = f_r(X)
-```
-
-Similarity, such as cosine similarity, is computed as:
-
-```math
-S_{\mathrm{ref}}(y \mid k) = \frac{1}{|k|} \sum_{i \in k} \max_{j \in r_y} \cos(Z_i, Z_j)
-```
-
-where `r_y` is the set of cells labeled as `y` in the reference.
-
-## 4.3 Model-Based Evidence
-
-For each model `m`, prediction probabilities are obtained:
-
-```math
-P_m(y \mid i)
-```
-
-Cluster-level aggregation is defined as:
-
-```math
-S_{\mathrm{model}}(y \mid k) = \frac{1}{|k|} \sum_{i \in k} P_m(y \mid i)
-```
-
-Multi-model aggregation is defined as:
-
-```math
-S_{\mathrm{model}}^{\mathrm{agg}}(y \mid k) = \sum_m w_m S_{\mathrm{model}}(y \mid k)
-```
-
-## 4.4 Ontology-Based Evidence
-
-Given an ontology graph `\mathcal{O}`, parent-child relationships are defined as:
-
-```math
-y_{\mathrm{parent}} = \mathrm{Parent}(y)
-```
-
-Hierarchical consistency is computed as:
-
-```math
-S_{\mathrm{onto}}(y \mid k) = \mathbf{1}(\mathrm{consistent\ across\ levels})
-```
-
-## 5. Evidence Fusion
-
-Multi-source evidence is integrated as:
-
-```math
-S(y \mid k) =
-w_1 S_{\mathrm{marker}} +
-w_2 S_{\mathrm{ref}} +
-w_3 S_{\mathrm{model}}^{\mathrm{agg}} +
-w_4 S_{\mathrm{onto}}
-```
-
-The candidate label is selected as:
-
-```math
-\hat{y}_k = \arg\max_y S(y \mid k)
-```
+---
 
 ## 6. Uncertainty Quantification
 
-### 6.1 Model Disagreement
+Three axes of uncertainty stored per cluster:
 
-```math
-U_{\mathrm{model}} = 1 - \max_y S_{\mathrm{model}}^{\mathrm{agg}}(y \mid k)
+- `model_disagreement`: low if CellTypist is available and uncontradicted; high if contradicted.
+- `reference_distance`: low if best reference Jaccard ≥ 0.20; high otherwise.
+- `marker_inconsistency`: low if ≥5 strong markers; medium if <5; high if no markers.
+
+---
+
+## 7. LLM-Assisted Reasoning
+
+Given structured evidence `E_k`, construct a prompt:
+
+```
+Cluster k (N cells) · Decision: X · Confidence: lineage=Y subtype=Z overall=W
+Marker genes: [top 8 with log2FC]
+Model evidence: [CellTypist label + probability]
+Reference matches: [top 3 builtin / external Jaccard]
+Supports / Uncertainties / Contradictions
 ```
 
-### 6.2 Reference Distance
+Claude Haiku generates a ≤60-word grounded summary, stored in `reasoning.summary`.
 
-```math
-U_{\mathrm{ref}} = 1 - \max_y S_{\mathrm{ref}}(y \mid k)
-```
+Hard constraints enforced in the system prompt:
+- No invented marker genes, references, or biological claims.
+- No override of the evidence-based decision or confidence level.
+- Uncertainty is explicitly stated when evidence is weak.
+- Output is plain text, not JSON.
 
-### 6.3 Marker Inconsistency
+The LLM is purely explanatory. No downstream code reads `reasoning.summary`
+to make decisions. Skipped silently if `anthropic` SDK absent or `ANTHROPIC_API_KEY` unset.
 
-```math
-U_{\mathrm{marker}} = 1 - S_{\mathrm{marker}}(\hat{y}_k \mid k)
-```
+---
 
-Total uncertainty is defined as:
+## 8. Annotation Record
 
-```math
-U_k = \lambda_1 U_{\mathrm{model}} + \lambda_2 U_{\mathrm{ref}} + \lambda_3 U_{\mathrm{marker}}
-```
-
-## 7. Decision Rule
-
-The final decision is:
-
-```math
-D_k =
-\begin{cases}
-\mathrm{Accepted} & \mathrm{if}\ S(\hat{y}_k) > \tau_1 \land U_k < \delta_1 \\
-\mathrm{Ambiguous} & \mathrm{if}\ S(\hat{y}_k) > \tau_2 \\
-\mathrm{Unknown} & \mathrm{if}\ U_k > \delta_2 \\
-\mathrm{Needs\ review} & \mathrm{otherwise}
-\end{cases}
-```
-
-## 8. LLM-Assisted Reasoning
-
-Given structured evidence `E_k`, construct an input:
-
-```math
-I_k = \mathrm{Serialize}(E_k)
-```
-
-The LLM output is:
-
-```math
-R_k = \mathrm{LLM}(I_k)
-```
-
-The LLM does not directly generate labels. It is used only for:
-
-- Evidence summarization.
-- Contradiction detection.
-- Explanation generation.
-
-## 9. Annotation Record
-
-Each cluster's final output is:
-
-```math
-A_k = (E_k, R_k, D_k)
-```
-
-It is stored as:
+Each cluster's complete output:
 
 ```json
 {
-  "cluster": "k",
-  "label": "y_hat",
-  "scores": {},
-  "uncertainty": "U_k",
-  "evidence": {},
-  "reasoning": "...",
-  "decision": "Accepted/Ambiguous/Unknown"
+  "cluster_id": "k",
+  "proposed_label": "ŷ_k",
+  "decision": "Accepted / Ambiguous / Needs review / Unknown / Artifact warning",
+  "confidence": {"lineage": "high/medium/low/unknown", "subtype": "...", "overall": "..."},
+  "evidence": {
+    "markers": [{"gene": "...", "score": ..., "log2fc": ..., "pval_adj": ...}],
+    "models": [{"model": "CellTypist", "label": "...", "probability": ...}],
+    "references": [{"ref_id": "builtin|<id>", "label": "...", "jaccard": ..., "n_shared": ...}],
+    "ontology": [],
+    "qc_warnings": []
+  },
+  "uncertainty": {
+    "model_disagreement": "low/high/unknown",
+    "reference_distance": "low/high/unknown",
+    "marker_inconsistency": "low/medium/high"
+  },
+  "reasoning": {
+    "summary": "...",
+    "supports": ["..."],
+    "contradictions": ["..."],
+    "uncertainties": ["..."],
+    "validation_suggestions": ["..."]
+  },
+  "provenance": {
+    "cell_count": ...,
+    "models": ["CellTypist"],
+    "references": ["builtin", "my_ref"],
+    "parameters": {}
+  }
 }
 ```
+
+---
+
+## 9. Reproducibility Record
+
+Saved alongside every run:
+
+```json
+{
+  "scaudit_version": "0.1.0",
+  "input_file": "input.h5ad",
+  "input_hash": null,
+  "parameters": {"dataset": {...}, "output": {...}},
+  "references": [],
+  "models": [],
+  "environment": {"python": "3.12.10", "platform": "..."},
+  "created_at": "2026-05-05T10:00:00+00:00"
+}
+```
+
+Planned: input file SHA-256 hash, CellTypist model version, reference checksums.
+
+---
 
 ## 10. Pipeline Summary
 
 ```text
-Input X
--> Preprocessing
--> Reference selection
--> Evidence computation
--> Evidence fusion
--> Uncertainty estimation
--> Decision
--> LLM explanation
--> Output annotation records
+Input .h5ad
+→ diagnose_dataset()        # Structure check, cluster sizes, UMAP coords
+→ compute_cluster_evidence()
+    → _fill_marker_evidence()    # Wilcoxon DE (scanpy)
+    → _fill_marker_db_evidence() # Jaccard vs builtin DB
+    → _fill_celltypist_evidence() # CellTypist majority vote (optional)
+    → _fill_reference_evidence() # Jaccard vs registered reference h5ads (optional)
+→ build_annotation_cards()
+    → _assign_annotation()       # Rule-based decision + confidence
+→ enrich_cards_with_llm()    # Claude Haiku narrative (optional)
+→ render_draft_report()      # report.html + review.html
+→ write outputs              # JSON, CSV, config.resolved.toml, reproducibility.json
 ```
 
-## Core Methods Statement
+---
 
-```text
-We formalize single-cell annotation as an evidence aggregation and decision problem,
-rather than a direct classification task.
-```
+## 11. Planned Method Additions
+
+| Method | Phase |
+|---|---|
+| Gene symbol normalization | Phase 13 |
+| Mouse ↔ human ortholog mapping | Phase 13 |
+| Per-cluster QC metrics (n_counts, pct_mito) | Phase 14 |
+| Annotated h5ad output | Phase 15 |
+| Weighted evidence fusion / calibration | Phase 20 |
+| scVI / scANVI latent similarity | Phase 20 |
+| Cell state vs cell type separation | Phase 21 |
+| Novel cell detection | Phase 20 |
