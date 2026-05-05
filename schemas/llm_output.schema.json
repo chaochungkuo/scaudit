@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaudit.local/schemas/llm_output.schema.json",
+  "title": "scaudit LLM output",
+  "type": "object",
+  "required": ["summary", "supports", "contradictions", "uncertainties", "validation_suggestions", "decision_override"],
+  "properties": {
+    "summary": { "type": "string" },
+    "supports": { "type": "array", "items": { "type": "string" } },
+    "contradictions": { "type": "array", "items": { "type": "string" } },
+    "uncertainties": { "type": "array", "items": { "type": "string" } },
+    "validation_suggestions": { "type": "array", "items": { "type": "string" } },
+    "decision_override": { "type": "null" }
+  }
+}
