@@ -9,3 +9,6 @@ build/
 *.egg-info/
 results/
 final/
+examples/*/data/
+examples/*/results/
+examples/*/final/
