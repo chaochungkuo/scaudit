@@ -128,6 +128,7 @@ def _write_report_html(
 
     umap_html = _umap_section(cards, diagnosis) if cards else ""
     completeness_html = _evidence_completeness_section(cards) if cards else ""
+    reference_html = _reference_match_section(cards) if cards else ""
     marker_html = _marker_expression_section(cards) if cards else ""
     attention_html = _attention_panel(attention) if attention else ""
     warning_html = _warning_list(warnings) if warnings else ""
@@ -146,6 +147,7 @@ def _write_report_html(
     <div class="metrics-grid">{metrics}</div>
     {umap_html}
     {completeness_html}
+    {reference_html}
     {marker_html}
     {attention_html}
     {warning_html}
@@ -324,6 +326,7 @@ def _umap_plotly(cards: list[dict[str, Any]], umap_coords: dict[str, Any] | None
     }};
     window.scauditRenderPlots = function() {{
       if (window.scauditRenderUMAP) {{ window.scauditRenderUMAP(); }}
+      if (window.scauditRenderReferenceHeatmap) {{ window.scauditRenderReferenceHeatmap(); }}
       if (window.scauditRenderMarkerHeatmap) {{ window.scauditRenderMarkerHeatmap(); }}
     }};
     </script>"""
@@ -421,6 +424,128 @@ def _completeness_cell(available: bool) -> str:
     css = "is-present" if available else "is-missing"
     symbol = "OK" if available else "NA"
     return f'<td><span class="completeness-dot {css}" title="{label}">{symbol}</span></td>'
+
+
+# ── Reference match evidence ─────────────────────────────────────────────────
+
+
+def _reference_match_section(cards: list[dict[str, Any]]) -> str:
+    matrix = _reference_match_matrix(cards)
+    if not matrix:
+        return ""
+
+    clusters = [str(card.get("cluster_id", "")) for card in cards]
+    labels = [str(row["label"]) for row in matrix]
+    z_values: list[list[float | None]] = []
+    hover_text: list[list[str]] = []
+    for row in matrix:
+        label = str(row["label"])
+        z_row: list[float | None] = []
+        hover_row: list[str] = []
+        for cluster_id in clusters:
+            match = row["values"].get(cluster_id)
+            if not isinstance(match, dict):
+                z_row.append(None)
+                hover_row.append(f"Reference label: {label}<br>Cluster: {cluster_id}<br>No reference match")
+                continue
+            jaccard = _optional_number(match.get("jaccard", match.get("similarity")))
+            ref_id = str(match.get("ref_id") or match.get("reference") or "")
+            shared = match.get("n_shared")
+            if jaccard is None:
+                z_row.append(None)
+                hover_row.append(f"Reference label: {label}<br>Cluster: {cluster_id}<br>No reference score")
+            else:
+                z_row.append(jaccard)
+                shared_text = f"<br>Shared genes: {shared}" if isinstance(shared, (int, float)) else ""
+                hover_row.append(f"Reference: {ref_id}<br>Label: {label}<br>Cluster: {cluster_id}<br>Jaccard: {jaccard:.3f}{shared_text}")
+        z_values.append(z_row)
+        hover_text.append(hover_row)
+
+    trace = {
+        "type": "heatmap",
+        "x": [f"Cluster {cluster_id}" for cluster_id in clusters],
+        "y": labels,
+        "z": z_values,
+        "text": hover_text,
+        "hovertemplate": "%{text}<extra></extra>",
+        "zmin": 0,
+        "zmax": max(0.2, max((value for row in z_values for value in row if isinstance(value, (int, float))), default=0.0)),
+        "colorscale": [
+            [0.0, "#f7fbff"],
+            [0.25, "#deebf7"],
+            [0.5, "#9ecae1"],
+            [0.75, "#3182bd"],
+            [1.0, "#08519c"],
+        ],
+        "colorbar": {
+            "title": {"text": "Jaccard", "side": "right"},
+            "len": 0.82,
+            "thickness": 14,
+            "outlinewidth": 0,
+        },
+        "xgap": 1,
+        "ygap": 1,
+    }
+    height = max(280, min(720, 120 + len(labels) * 24))
+    layout = {
+        "height": height,
+        "paper_bgcolor": "rgba(0,0,0,0)",
+        "plot_bgcolor": "#ffffff",
+        "margin": {"l": 132, "r": 66, "t": 10, "b": 76},
+        "xaxis": {"tickangle": -35, "showgrid": False, "zeroline": False, "ticks": "", "title": {"text": ""}},
+        "yaxis": {"autorange": "reversed", "showgrid": False, "zeroline": False, "ticks": "", "title": {"text": ""}},
+        "font": {"family": "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", "size": 12, "color": "#253447"},
+    }
+    config = {"responsive": True, "displaylogo": False}
+
+    return f"""
+    <section class="reference-section">
+      <div class="section-header">
+        <h2>Reference match matrix</h2>
+        <span class="muted">External references · clusters × labels</span>
+      </div>
+      <div class="reference-plot-wrap">
+        <div id="reference-heatmap-loading" class="reference-plot-loading">Loading reference match matrix&hellip; (requires internet access)</div>
+        <div id="reference-heatmap" style="width:100%;height:{height}px"></div>
+      </div>
+      <script>
+      window.scauditReferenceHeatmap = {{
+        trace: {json.dumps(trace)},
+        layout: {json.dumps(layout)},
+        config: {json.dumps(config)}
+      }};
+      window.scauditRenderReferenceHeatmap = function() {{
+        if (window.scauditReferenceHeatmapRendered) {{ return; }}
+        window.scauditReferenceHeatmapRendered = true;
+        var loading = document.getElementById('reference-heatmap-loading');
+        if (loading) {{ loading.style.display = 'none'; }}
+        Plotly.newPlot('reference-heatmap', [window.scauditReferenceHeatmap.trace], window.scauditReferenceHeatmap.layout, window.scauditReferenceHeatmap.config);
+      }};
+      if (window.Plotly) {{ window.scauditRenderReferenceHeatmap(); }}
+      </script>
+    </section>
+    """
+
+
+def _reference_match_matrix(cards: list[dict[str, Any]], *, max_labels: int = 40) -> list[dict[str, Any]]:
+    labels: list[str] = []
+    values_by_label: dict[str, dict[str, dict[str, Any]]] = {}
+    for card in cards:
+        cluster_id = str(card.get("cluster_id", ""))
+        evidence = card.get("evidence", {})
+        references = evidence.get("references") or []
+        for match in references:
+            if not isinstance(match, dict) or match.get("ref_id") == "builtin":
+                continue
+            label = str(match.get("label") or "")
+            if not label:
+                continue
+            key = f"{match.get('ref_id', 'ref')}:{label}"
+            if key not in values_by_label:
+                labels.append(key)
+                values_by_label[key] = {}
+            values_by_label[key][cluster_id] = match
+    return [{"label": label, "values": values_by_label[label]} for label in labels[:max_labels]]
 
 
 # ── Marker expression evidence ───────────────────────────────────────────────
@@ -1284,6 +1409,31 @@ _CSS = """
   }
   .completeness-dot.is-present { background: #e3f5ec; color: #1a6b3c; }
   .completeness-dot.is-missing { background: #eef0f4; color: var(--muted); }
+
+  /* ── Reference match matrix ── */
+  .reference-section {
+    margin-bottom: 16px;
+  }
+  .reference-plot-wrap {
+    position: relative;
+    min-height: 280px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .reference-plot-loading {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--card);
+    color: var(--navy);
+    font-size: 13px;
+  }
 
   /* ── Marker expression overview ── */
   .marker-section {

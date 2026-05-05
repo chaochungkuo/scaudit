@@ -387,7 +387,9 @@ class CliTests(unittest.TestCase):
                                     {"gene": "NKG7", "score": 5.5, "log2fc": 0.8, "pval_adj": 0.02},
                                 ],
                                 "models": [],
-                                "references": [],
+                                "references": [
+                                    {"ref_id": "pbmc_ref", "label": "CD4 T cell", "jaccard": 0.18, "n_shared": 6}
+                                ],
                                 "ontology": [],
                                 "qc_warnings": [],
                                 "qc": {
@@ -434,6 +436,10 @@ class CliTests(unittest.TestCase):
             self.assertIn("0/2 clusters have all evidence sources", html)
             self.assertIn(">OK</span>", html)
             self.assertIn(">NA</span>", html)
+            self.assertIn("Reference match matrix", html)
+            self.assertIn("window.scauditReferenceHeatmap", html)
+            self.assertIn("pbmc_ref:CD4 T cell", html)
+            self.assertIn("Jaccard: 0.180", html)
             self.assertIn("Marker expression evidence", html)
             self.assertIn("Marker expression", html)
             self.assertIn("window.scauditMarkerHeatmap", html)
