@@ -166,7 +166,7 @@ def diagnose_dataset(path: Path, cluster_key: str = "", sample_key: str = "") ->
             warnings=[f"Failed to read h5ad: {exc}"],
         )
 
-    obs_keys = list(map(str, adata.obs_keys()))
+    obs_keys = list(map(str, adata.obs.columns))
     var_names_preview = [str(name) for name in list(adata.var_names[:10])]
     gene_id_counts = infer_gene_id_counts([str(name) for name in list(adata.var_names)])
     gene_id_type = infer_gene_id_type(gene_id_counts)
