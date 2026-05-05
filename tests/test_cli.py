@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -11,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from scaudit.config import load_config, validate_config
 from scaudit.cli import collect_capabilities, main
+from scaudit.data import infer_gene_id_counts, infer_gene_id_type, summarize_cluster_key
 from scaudit.run import build_annotation_cards
 
 
@@ -50,7 +52,45 @@ class CliTests(unittest.TestCase):
             input_path.write_text("placeholder", encoding="utf-8")
             with redirect_stdout(io.StringIO()):
                 main(["diagnose", str(input_path), "--cluster-key", "leiden", "--out", str(temp_path / "results")])
-            self.assertTrue((temp_path / "results" / "diagnosis.json").exists())
+            diagnosis_path = temp_path / "results" / "diagnosis.json"
+            self.assertTrue(diagnosis_path.exists())
+            diagnosis = json.loads(diagnosis_path.read_text(encoding="utf-8"))
+            self.assertIn("gene_id_type", diagnosis)
+            self.assertIn("gene_id_counts", diagnosis)
+            self.assertIn("matrix", diagnosis)
+            self.assertIn("qc_metadata", diagnosis)
+            self.assertIn("cluster_diagnostics", diagnosis)
+
+    def test_gene_id_detection_prefers_dominant_identifier_type(self) -> None:
+        human_counts = infer_gene_id_counts(
+            [
+                "ENSG000001",
+                "ENSG000002",
+                "ENSG000003",
+                "ENSG000004",
+                "ENSG000005",
+                "ENSG000006",
+                "ENSG000007",
+                "ENSG000008",
+                "ENSG000009",
+                "ACTB",
+            ]
+        )
+        symbol_counts = infer_gene_id_counts(["Actb", "Gapdh", "Mki67"])
+        mixed_counts = infer_gene_id_counts(["ENSG000001", "ENSMUSG0000001", "ACTB"])
+
+        self.assertEqual(infer_gene_id_type(human_counts), "human_ensembl")
+        self.assertEqual(infer_gene_id_type(symbol_counts), "symbol")
+        self.assertEqual(infer_gene_id_type(mixed_counts), "mixed")
+
+    def test_cluster_diagnostics_flags_tiny_and_missing_clusters(self) -> None:
+        diagnosis = summarize_cluster_key({"0": 25, "1": 8}, missing_values=2)
+
+        self.assertEqual(diagnosis["missing_values"], 2)
+        self.assertEqual(diagnosis["min_cluster_size"], 8)
+        self.assertEqual(diagnosis["max_cluster_size"], 25)
+        self.assertEqual(diagnosis["tiny_clusters"], ["1"])
+        self.assertFalse(diagnosis["suitable_for_cluster_level_audit"])
 
     def test_validate_config_reports_missing_dataset_as_warning(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

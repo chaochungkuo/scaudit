@@ -7,6 +7,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+QC_KEY_CANDIDATES = {
+    "n_genes": ("n_genes", "n_genes_by_counts"),
+    "total_counts": ("total_counts", "n_counts"),
+    "pct_counts_mt": ("pct_counts_mt", "percent_mito", "pct_mito"),
+    "doublet_score": ("doublet_score", "scrublet_score"),
+}
+
 
 @dataclass(frozen=True)
 class DatasetDiagnosis:
@@ -17,9 +24,14 @@ class DatasetDiagnosis:
     n_vars: int | None
     obs_keys: list[str]
     var_names_preview: list[str]
+    gene_id_type: str
+    gene_id_counts: dict[str, int]
+    matrix: dict[str, Any]
+    qc_metadata: dict[str, Any]
     cluster_key: str
     cluster_count: int | None
     cluster_sizes: dict[str, int]
+    cluster_diagnostics: dict[str, Any]
     warnings: list[str]
     umap_coords: dict[str, Any] = field(default_factory=dict)
 
@@ -32,10 +44,15 @@ class DatasetDiagnosis:
             "n_vars": self.n_vars,
             "obs_keys": self.obs_keys,
             "var_names_preview": self.var_names_preview,
+            "gene_id_type": self.gene_id_type,
+            "gene_id_counts": self.gene_id_counts,
+            "matrix": self.matrix,
+            "qc_metadata": self.qc_metadata,
             "cluster_key": self.cluster_key,
             "cluster_count": self.cluster_count,
             "cluster_sizes": self.cluster_sizes,
             "umap_coords": self.umap_coords,
+            "cluster_diagnostics": self.cluster_diagnostics,
             "warnings": self.warnings,
         }
 
@@ -74,35 +91,65 @@ class ClusterEvidence:
         }
 
 
+def _empty_diagnosis(
+    path: Path,
+    cluster_key: str,
+    *,
+    file_exists: bool,
+    readable: bool,
+    warnings: list[str],
+) -> DatasetDiagnosis:
+    return DatasetDiagnosis(
+        path=str(path),
+        file_exists=file_exists,
+        readable=readable,
+        n_obs=None,
+        n_vars=None,
+        obs_keys=[],
+        var_names_preview=[],
+        gene_id_type="unknown",
+        gene_id_counts={},
+        matrix={
+            "has_X": False,
+            "shape": None,
+            "dtype": None,
+            "is_sparse": None,
+            "layers": [],
+            "raw_present": False,
+            "normalization_hint": "unknown",
+        },
+        qc_metadata=_detect_qc_metadata([]),
+        cluster_key=cluster_key,
+        cluster_count=None,
+        cluster_sizes={},
+        cluster_diagnostics={
+            "missing_values": None,
+            "min_cluster_size": None,
+            "max_cluster_size": None,
+            "tiny_clusters": [],
+            "suitable_for_cluster_level_audit": False,
+        },
+        warnings=warnings,
+    )
+
+
 def diagnose_dataset(path: Path, cluster_key: str = "") -> DatasetDiagnosis:
     warnings: list[str] = []
     if not path.exists():
-        return DatasetDiagnosis(
-            path=str(path),
+        return _empty_diagnosis(
+            path,
+            cluster_key,
             file_exists=False,
             readable=False,
-            n_obs=None,
-            n_vars=None,
-            obs_keys=[],
-            var_names_preview=[],
-            cluster_key=cluster_key,
-            cluster_count=None,
-            cluster_sizes={},
             warnings=[f"Dataset file not found: {path}"],
         )
 
     if importlib.util.find_spec("anndata") is None:
-        return DatasetDiagnosis(
-            path=str(path),
+        return _empty_diagnosis(
+            path,
+            cluster_key,
             file_exists=True,
             readable=False,
-            n_obs=None,
-            n_vars=None,
-            obs_keys=[],
-            var_names_preview=[],
-            cluster_key=cluster_key,
-            cluster_count=None,
-            cluster_sizes={},
             warnings=["anndata is not installed; cannot inspect .h5ad contents yet."],
         )
 
@@ -111,29 +158,42 @@ def diagnose_dataset(path: Path, cluster_key: str = "") -> DatasetDiagnosis:
 
         adata = ad.read_h5ad(path, backed="r")
     except Exception as exc:  # pragma: no cover - depends on optional anndata/h5ad internals
-        return DatasetDiagnosis(
-            path=str(path),
+        return _empty_diagnosis(
+            path,
+            cluster_key,
             file_exists=True,
             readable=False,
-            n_obs=None,
-            n_vars=None,
-            obs_keys=[],
-            var_names_preview=[],
-            cluster_key=cluster_key,
-            cluster_count=None,
-            cluster_sizes={},
             warnings=[f"Failed to read h5ad: {exc}"],
         )
 
     obs_keys = list(map(str, adata.obs_keys()))
     var_names_preview = [str(name) for name in list(adata.var_names[:10])]
+    gene_id_counts = infer_gene_id_counts([str(name) for name in list(adata.var_names)])
+    gene_id_type = infer_gene_id_type(gene_id_counts)
+    matrix = summarize_matrix(adata)
+    qc_metadata = _detect_qc_metadata(obs_keys)
     cluster_sizes: dict[str, int] = {}
     cluster_count: int | None = None
+    cluster_diagnostics = {
+        "missing_values": None,
+        "min_cluster_size": None,
+        "max_cluster_size": None,
+        "tiny_clusters": [],
+        "suitable_for_cluster_level_audit": False,
+    }
     if cluster_key:
         if cluster_key in adata.obs:
-            counts = adata.obs[cluster_key].astype(str).value_counts().sort_index()
+            missing_values = int(adata.obs[cluster_key].isna().sum())
+            counts = adata.obs[cluster_key].dropna().astype(str).value_counts().sort_index()
             cluster_sizes = {str(index): int(value) for index, value in counts.items()}
             cluster_count = len(cluster_sizes)
+            cluster_diagnostics = summarize_cluster_key(cluster_sizes, missing_values)
+            if missing_values:
+                warnings.append(f"cluster_key '{cluster_key}' has {missing_values} missing values")
+            for cluster_id in cluster_diagnostics["tiny_clusters"]:
+                warnings.append(f"cluster '{cluster_id}' has fewer than 10 cells")
+            if cluster_count == 0:
+                warnings.append(f"cluster_key '{cluster_key}' has no usable cluster values")
         else:
             warnings.append(f"cluster_key '{cluster_key}' was not found in .obs")
     else:
@@ -146,6 +206,13 @@ def diagnose_dataset(path: Path, cluster_key: str = "") -> DatasetDiagnosis:
         except Exception as exc:  # pragma: no cover
             warnings.append(f"Could not extract UMAP coordinates: {exc}")
 
+    if gene_id_type in {"mixed", "unknown"}:
+        warnings.append(f"Gene ID type is {gene_id_type}; marker and reference matching may need explicit configuration.")
+    if not qc_metadata["detected"]:
+        warnings.append("No common QC metadata keys were detected in .obs.")
+    if matrix["normalization_hint"] == "unknown":
+        warnings.append("Could not infer whether X contains raw counts or normalized values.")
+
     return DatasetDiagnosis(
         path=str(path),
         file_exists=True,
@@ -154,13 +221,17 @@ def diagnose_dataset(path: Path, cluster_key: str = "") -> DatasetDiagnosis:
         n_vars=int(adata.n_vars),
         obs_keys=obs_keys,
         var_names_preview=var_names_preview,
+        gene_id_type=gene_id_type,
+        gene_id_counts=gene_id_counts,
+        matrix=matrix,
+        qc_metadata=qc_metadata,
         cluster_key=cluster_key,
         cluster_count=cluster_count,
         cluster_sizes=cluster_sizes,
         umap_coords=umap_coords,
+        cluster_diagnostics=cluster_diagnostics,
         warnings=warnings,
     )
-
 
 def _extract_umap_coords(
     adata: Any,
@@ -398,3 +469,98 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     if not a or not b:
         return 0.0
     return len(a & b) / len(a | b)
+
+
+def infer_gene_id_counts(var_names: list[str]) -> dict[str, int]:
+    counts = {
+        "human_ensembl": 0,
+        "mouse_ensembl": 0,
+        "symbol_like": 0,
+        "empty": 0,
+    }
+    for name in var_names:
+        value = str(name).strip()
+        if not value:
+            counts["empty"] += 1
+        elif value.startswith("ENSG"):
+            counts["human_ensembl"] += 1
+        elif value.startswith("ENSMUSG"):
+            counts["mouse_ensembl"] += 1
+        else:
+            counts["symbol_like"] += 1
+    return counts
+
+
+def infer_gene_id_type(counts: dict[str, int]) -> str:
+    total = sum(counts.values())
+    if total == 0:
+        return "unknown"
+    non_empty_total = total - counts.get("empty", 0)
+    if non_empty_total == 0:
+        return "unknown"
+
+    categories = {
+        "human_ensembl": counts.get("human_ensembl", 0),
+        "mouse_ensembl": counts.get("mouse_ensembl", 0),
+        "symbol": counts.get("symbol_like", 0),
+    }
+    dominant, dominant_count = max(categories.items(), key=lambda item: item[1])
+    if dominant_count / non_empty_total >= 0.90:
+        return dominant
+    return "mixed"
+
+
+def summarize_matrix(adata: Any) -> dict[str, Any]:
+    matrix = getattr(adata, "X", None)
+    dtype = getattr(matrix, "dtype", None)
+    shape = getattr(matrix, "shape", None)
+    is_sparse = matrix.__class__.__module__.startswith("scipy.sparse") if matrix is not None else None
+    return {
+        "has_X": matrix is not None,
+        "shape": list(shape) if shape is not None else None,
+        "dtype": str(dtype) if dtype is not None else None,
+        "is_sparse": is_sparse,
+        "layers": list(map(str, getattr(adata, "layers", {}).keys())),
+        "raw_present": getattr(adata, "raw", None) is not None,
+        "normalization_hint": infer_normalization_hint(adata),
+    }
+
+
+def infer_normalization_hint(adata: Any) -> str:
+    uns_keys = set(map(str, getattr(adata, "uns", {}).keys()))
+    layer_keys = set(map(str, getattr(adata, "layers", {}).keys()))
+    if "log1p" in uns_keys:
+        return "log_normalized"
+    if {"counts", "raw_counts"} & layer_keys:
+        return "counts_layer_available"
+    if getattr(adata, "raw", None) is not None:
+        return "raw_snapshot_available"
+    return "unknown"
+
+
+def _detect_qc_metadata(obs_keys: list[str]) -> dict[str, Any]:
+    obs_key_set = set(obs_keys)
+    detected = {}
+    missing = []
+    for canonical, aliases in QC_KEY_CANDIDATES.items():
+        match = next((key for key in aliases if key in obs_key_set), None)
+        if match is None:
+            missing.append(canonical)
+        else:
+            detected[canonical] = match
+    return {
+        "detected": detected,
+        "missing": missing,
+    }
+
+
+def summarize_cluster_key(cluster_sizes: dict[str, int], missing_values: int) -> dict[str, Any]:
+    sizes = list(cluster_sizes.values())
+    tiny_clusters = [cluster_id for cluster_id, size in cluster_sizes.items() if size < 10]
+    return {
+        "missing_values": missing_values,
+        "min_cluster_size": min(sizes) if sizes else None,
+        "max_cluster_size": max(sizes) if sizes else None,
+        "tiny_clusters": tiny_clusters,
+        "suitable_for_cluster_level_audit": bool(sizes) and missing_values == 0 and not tiny_clusters,
+    }

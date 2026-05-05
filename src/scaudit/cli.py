@@ -207,6 +207,13 @@ def diagnose(args: Sequence[str]) -> None:
             ("readable", "OK" if diagnosis.readable else "WARN", str(diagnosis.readable)),
             ("cells", "OK" if diagnosis.n_obs is not None else "SKIPPED", str(diagnosis.n_obs)),
             ("genes", "OK" if diagnosis.n_vars is not None else "SKIPPED", str(diagnosis.n_vars)),
+            ("gene_id_type", "OK" if diagnosis.gene_id_type not in {"unknown", "mixed"} else "WARN", diagnosis.gene_id_type),
+            ("matrix", "OK" if diagnosis.matrix.get("has_X") else "WARN", diagnosis.matrix.get("normalization_hint", "unknown")),
+            (
+                "qc_metadata",
+                "OK" if diagnosis.qc_metadata.get("detected") else "WARN",
+                ", ".join(diagnosis.qc_metadata.get("detected", {}).values()) or "none detected",
+            ),
             ("cluster_key", "OK" if diagnosis.cluster_count is not None else "WARN", diagnosis.cluster_key or "(not set)"),
         ],
     )
