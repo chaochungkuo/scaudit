@@ -284,7 +284,7 @@ def _build_card(cluster_id: str, cell_count: int, ev: ClusterEvidence | None) ->
             ),
             "references": ref_matches[:3],
             "ontology": [],
-            "qc_warnings": [],
+            "qc_warnings": ev.qc_warnings if ev else [],
         },
         "uncertainty": uncertainty,
         "reasoning": reasoning,

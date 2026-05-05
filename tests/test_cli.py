@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from scaudit.config import load_config, validate_config
 from scaudit.cli import collect_capabilities, main
-from scaudit.data import infer_gene_id_counts, infer_gene_id_type, summarize_cluster_key
+from scaudit.data import _reference_gene_warnings, infer_gene_id_counts, infer_gene_id_type, summarize_cluster_key
 from scaudit.llm import OpenAICompatibleClient, enrich_cards_with_llm
 from scaudit.markers import attach_marker_evidence, marker_rows_from_rank_genes_groups
 from scaudit.report import render_draft_report
@@ -87,6 +87,18 @@ class CliTests(unittest.TestCase):
         self.assertEqual(infer_gene_id_type(human_counts), "human_ensembl")
         self.assertEqual(infer_gene_id_type(symbol_counts), "symbol")
         self.assertEqual(infer_gene_id_type(mixed_counts), "mixed")
+
+    def test_reference_gene_warnings_flag_identifier_mismatch_and_low_overlap(self) -> None:
+        warnings = _reference_gene_warnings(
+            "ref_a",
+            "symbol",
+            "human_ensembl",
+            {"0": {"CD3D", "CD3E"}, "1": {"MS4A1"}},
+            {"ENSG000001", "ENSG000002"},
+        )
+
+        self.assertIn("Reference ref_a gene ID type is human_ensembl", warnings[0])
+        self.assertIn("Only 0% of query marker genes were found in reference ref_a", warnings[1])
 
     def test_cluster_diagnostics_flags_tiny_and_missing_clusters(self) -> None:
         diagnosis = summarize_cluster_key({"0": 25, "1": 8}, missing_values=2)

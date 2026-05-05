@@ -80,6 +80,7 @@ class ClusterEvidence:
     celltypist_label: str | None = None
     celltypist_prob: float | None = None
     reference_matches: list[dict[str, Any]] = field(default_factory=list)
+    qc_warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -88,6 +89,7 @@ class ClusterEvidence:
             "celltypist_label": self.celltypist_label,
             "celltypist_prob": self.celltypist_prob,
             "reference_matches": self.reference_matches,
+            "qc_warnings": self.qc_warnings,
         }
 
 
@@ -284,12 +286,14 @@ def compute_cluster_evidence(
     adata.obs[cluster_key] = adata.obs[cluster_key].astype(str)
     cluster_ids = sorted(adata.obs[cluster_key].unique().tolist())
     evidence: dict[str, ClusterEvidence] = {cid: ClusterEvidence(cluster_id=cid) for cid in cluster_ids}
+    query_gene_counts = infer_gene_id_counts([str(name) for name in list(adata.var_names)])
+    query_gene_id_type = infer_gene_id_type(query_gene_counts)
 
     _fill_marker_evidence(adata, cluster_key, evidence, n_top_genes)
     _fill_marker_db_evidence(evidence)
     _fill_celltypist_evidence(adata, cluster_key, evidence)
     if reference_registry_path and reference_registry_path.exists():
-        _fill_reference_evidence(evidence, reference_registry_path)
+        _fill_reference_evidence(evidence, reference_registry_path, query_gene_id_type)
 
     return evidence
 
@@ -401,6 +405,7 @@ def _is_informative_marker(marker: MarkerGene) -> bool:
 def _fill_reference_evidence(
     evidence: dict[str, ClusterEvidence],
     registry_path: Path,
+    query_gene_id_type: str,
 ) -> None:
     if importlib.util.find_spec("anndata") is None or importlib.util.find_spec("scanpy") is None:
         return
@@ -415,7 +420,7 @@ def _fill_reference_evidence(
 
     for ref_id, ref_entry in registry.items():
         try:
-            _match_one_reference(ref_id, ref_entry, evidence, query_marker_sets)
+            _match_one_reference(ref_id, ref_entry, evidence, query_marker_sets, query_gene_id_type)
         except Exception:  # pragma: no cover - reference data may vary
             continue
 
@@ -434,6 +439,7 @@ def _match_one_reference(
     ref_entry: dict[str, Any],
     evidence: dict[str, ClusterEvidence],
     query_marker_sets: dict[str, set[str]],
+    query_gene_id_type: str,
     n_top: int = 20,
 ) -> None:
     import anndata as ad
@@ -451,6 +457,12 @@ def _match_one_reference(
     rdata = ad.read_h5ad(ref_data_path)
     if label_key not in rdata.obs:
         return
+
+    ref_var_names = {str(name) for name in list(rdata.var_names)}
+    ref_gene_id_type = str(manifest.get("gene_id_type") or "")
+    warnings = _reference_gene_warnings(ref_id, query_gene_id_type, ref_gene_id_type, query_marker_sets, ref_var_names)
+    for warning in warnings:
+        _append_reference_warning(evidence, warning)
 
     rdata.obs[label_key] = rdata.obs[label_key].astype(str)
     sc.settings.verbosity = 0
@@ -475,6 +487,38 @@ def _match_one_reference(
         matches = evidence[cid].reference_matches
         matches.sort(key=lambda m: m["jaccard"], reverse=True)
         evidence[cid].reference_matches = matches[:5]
+
+
+def _reference_gene_warnings(
+    ref_id: str,
+    query_gene_id_type: str,
+    ref_gene_id_type: str,
+    query_marker_sets: dict[str, set[str]],
+    ref_var_names: set[str],
+) -> list[str]:
+    warnings: list[str] = []
+    normalized_query_type = query_gene_id_type or "unknown"
+    normalized_ref_type = ref_gene_id_type or "unknown"
+    if normalized_query_type not in {"unknown", "mixed"} and normalized_ref_type not in {"unknown", "mixed"}:
+        if normalized_query_type != normalized_ref_type:
+            warnings.append(
+                f"Reference {ref_id} gene ID type is {normalized_ref_type}, but query gene ID type is {normalized_query_type}; reference matching may be unreliable."
+            )
+
+    query_marker_union = set().union(*query_marker_sets.values()) if query_marker_sets else set()
+    if query_marker_union:
+        overlap = len(query_marker_union & ref_var_names) / len(query_marker_union)
+        if overlap < 0.5:
+            warnings.append(
+                f"Only {overlap:.0%} of query marker genes were found in reference {ref_id}; check gene IDs or reference suitability."
+            )
+    return warnings
+
+
+def _append_reference_warning(evidence: dict[str, ClusterEvidence], warning: str) -> None:
+    for cluster_evidence in evidence.values():
+        if warning not in cluster_evidence.qc_warnings:
+            cluster_evidence.qc_warnings.append(warning)
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
