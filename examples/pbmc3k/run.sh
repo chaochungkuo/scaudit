@@ -29,6 +29,7 @@ except ModuleNotFoundError as exc:
 
 out_path = Path(sys.argv[1])
 out_path.parent.mkdir(parents=True, exist_ok=True)
+sc.settings.datasetdir = str(out_path.parent)
 
 adata = sc.datasets.pbmc3k()
 adata.var_names_make_unique()
@@ -36,6 +37,7 @@ sc.pp.filter_cells(adata, min_genes=200)
 sc.pp.filter_genes(adata, min_cells=3)
 sc.pp.normalize_total(adata, target_sum=1e4)
 sc.pp.log1p(adata)
+adata.raw = adata.copy()
 sc.pp.highly_variable_genes(adata, min_mean=0.0125, max_mean=3, min_disp=0.5)
 sc.pp.scale(adata, max_value=10)
 sc.tl.pca(adata, svd_solver="arpack")

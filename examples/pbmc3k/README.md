@@ -31,7 +31,7 @@ If the environment already has Scanpy, no extra install step is needed.
 From the repository root:
 
 ```bash
-bash examples/pbmc3k/run.sh
+pixi run bash examples/pbmc3k/run.sh
 ```
 
 The script writes:

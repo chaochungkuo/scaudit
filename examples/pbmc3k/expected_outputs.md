@@ -1,6 +1,6 @@
 # Expected PBMC3k outputs
 
-After running `bash examples/pbmc3k/run.sh`, the following files should exist:
+After running `pixi run bash examples/pbmc3k/run.sh`, the following files should exist:
 
 ```text
 examples/pbmc3k/data/pbmc3k_scaudit.h5ad

@@ -308,7 +308,7 @@ def _fill_marker_evidence(
             groupby=cluster_key,
             method="wilcoxon",
             n_genes=n_top_genes,
-            use_raw=False,
+            use_raw=getattr(adata, "raw", None) is not None,
             key_added="rank_genes",
         )
 
@@ -344,7 +344,7 @@ def _fill_marker_db_evidence(evidence: dict[str, ClusterEvidence]) -> None:
     from scaudit.markers import lookup_cell_type
 
     for ev in evidence.values():
-        query_genes = {m.gene for m in ev.markers if m.log2fc > 0.5 and m.pval_adj < 0.05}
+        query_genes = {m.gene for m in ev.markers if _is_informative_marker(m)}
         if not query_genes:
             continue
         db_matches = lookup_cell_type(query_genes)
@@ -384,6 +384,14 @@ def _fill_celltypist_evidence(
             evidence[cluster_id].celltypist_prob = round(top_prob, 3)
     except Exception:  # pragma: no cover
         pass
+
+
+def _is_informative_marker(marker: MarkerGene) -> bool:
+    if marker.pval_adj >= 0.05:
+        return False
+    if math.isnan(marker.log2fc):
+        return marker.score > 0
+    return marker.log2fc > 0.5
 
 
 def _fill_reference_evidence(

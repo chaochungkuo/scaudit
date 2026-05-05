@@ -290,8 +290,8 @@ def _assign_annotation(
     suggestions: list[str] = []
 
     # --- marker evidence ---
-    strong_markers = [m for m in markers if m.log2fc > 1.0 and m.pval_adj < 0.01]
-    moderate_markers = [m for m in markers if m.log2fc > 0.5 and m.pval_adj < 0.05]
+    strong_markers = [m for m in markers if _marker_strength(m) == "strong"]
+    moderate_markers = [m for m in markers if _marker_strength(m) in {"strong", "moderate"}]
 
     marker_lineage = "unknown"
     if len(strong_markers) >= 5:
@@ -431,6 +431,18 @@ def _assign_annotation(
     }
 
     return proposed_label, decision, confidence, reasoning, uncertainty
+
+
+def _marker_strength(marker: Any) -> str:
+    if marker.pval_adj >= 0.05:
+        return "weak"
+    if marker.log2fc != marker.log2fc:
+        return "moderate" if marker.score > 0 else "weak"
+    if marker.log2fc > 1.0:
+        return "strong"
+    if marker.log2fc > 0.5:
+        return "moderate"
+    return "weak"
 
 
 def _write_annotation_summary(path: Path, annotation_cards: list[dict[str, Any]]) -> None:
