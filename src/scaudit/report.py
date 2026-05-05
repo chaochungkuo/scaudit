@@ -819,6 +819,7 @@ def _cluster_card(card: dict[str, Any]) -> str:
     models = evidence.get("models") or []
     references = evidence.get("references") or []
     qc_metrics = evidence.get("qc") or {}
+    composition = evidence.get("composition") or {}
     qc_warnings = evidence.get("qc_warnings") or []
 
     is_open = decision in _NEEDS_ATTENTION
@@ -886,6 +887,9 @@ def _cluster_card(card: dict[str, Any]) -> str:
     qc_line = _format_qc_metrics(qc_metrics)
     if qc_line:
         ev_rows.append(("QC metrics", qc_line))
+    composition_line = _format_composition(composition)
+    if composition_line:
+        ev_rows.append(("Composition", composition_line))
     if qc_warnings:
         ev_rows.append(("QC flags", "; ".join(str(w) for w in qc_warnings)))
 
@@ -958,6 +962,24 @@ def _format_qc_metrics(qc_metrics: Any) -> str:
         if not isinstance(mean, (int, float)) or not isinstance(median, (int, float)):
             continue
         parts.append(f"{labels[key]} median {median:g}, mean {mean:g}")
+    return "; ".join(parts)
+
+
+def _format_composition(composition: Any) -> str:
+    if not isinstance(composition, dict):
+        return ""
+    parts = []
+    for key in ("sample", "batch"):
+        value = composition.get(key)
+        if not isinstance(value, dict):
+            continue
+        dominant = str(value.get("dominant") or "")
+        fraction = value.get("fraction")
+        total = value.get("total")
+        if not dominant or not isinstance(fraction, (int, float)):
+            continue
+        total_text = f", n={total}" if isinstance(total, int) else ""
+        parts.append(f"{key} {dominant} {fraction:.0%}{total_text}")
     return "; ".join(parts)
 
 

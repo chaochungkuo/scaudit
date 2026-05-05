@@ -107,6 +107,7 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
     dataset_path = Path(str(dataset.get("path", "")))
     cluster_key = str(dataset.get("cluster_key", ""))
     sample_key = str(dataset.get("sample_key", ""))
+    batch_key = str(dataset.get("batch_key", ""))
 
     diagnosis = diagnose_dataset(dataset_path, cluster_key=cluster_key, sample_key=sample_key)
     diagnosis_payload = diagnosis.to_dict()
@@ -117,6 +118,8 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
         dataset_path,
         cluster_key=cluster_key,
         reference_registry_path=ref_registry_path,
+        sample_key=sample_key,
+        batch_key=batch_key,
     )
 
     annotation_cards = build_annotation_cards(diagnosis_payload, evidence)
@@ -379,6 +382,7 @@ def _build_card(cluster_id: str, cell_count: int, ev: ClusterEvidence | None) ->
             "references": ref_matches[:3],
             "ontology": [],
             "qc": ev.qc_metrics if ev else {},
+            "composition": ev.composition if ev else {},
             "qc_warnings": qc_warnings,
         },
         "uncertainty": uncertainty,
@@ -568,6 +572,7 @@ def _is_artifact_qc_warning(warning: str) -> bool:
             "doublet score",
             "low detected genes",
             "low total counts",
+            "sample or batch effect",
         )
     )
 

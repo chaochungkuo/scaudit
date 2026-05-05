@@ -208,6 +208,22 @@ def _print_debug_card(card: dict) -> None:
         qc_rows.append(("warning", "WARN", str(warning)))
     print_status_table("QC evidence", qc_rows or [("none", "SKIPPED", "no QC evidence")])
 
+    composition_rows = []
+    composition = evidence.get("composition") or {}
+    if isinstance(composition, dict):
+        for key, value in composition.items():
+            if isinstance(value, dict):
+                fraction = value.get("fraction")
+                fraction_text = f"{fraction:.0%}" if isinstance(fraction, (int, float)) else ""
+                composition_rows.append(
+                    (
+                        str(key),
+                        str(value.get("dominant") or ""),
+                        f"{fraction_text}, {value.get('dominant_count', '')}/{value.get('total', '')} cells, obs_key {value.get('obs_key', '')}",
+                    )
+                )
+    print_status_table("Composition evidence", composition_rows or [("none", "SKIPPED", "no sample or batch evidence")])
+
     reasoning_rows = []
     if reasoning.get("summary"):
         reasoning_rows.append(("summary", "INFO", str(reasoning.get("summary"))))

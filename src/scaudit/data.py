@@ -81,6 +81,7 @@ class ClusterEvidence:
     celltypist_prob: float | None = None
     reference_matches: list[dict[str, Any]] = field(default_factory=list)
     qc_metrics: dict[str, dict[str, float | str]] = field(default_factory=dict)
+    composition: dict[str, dict[str, Any]] = field(default_factory=dict)
     qc_warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -91,6 +92,7 @@ class ClusterEvidence:
             "celltypist_prob": self.celltypist_prob,
             "reference_matches": self.reference_matches,
             "qc_metrics": self.qc_metrics,
+            "composition": self.composition,
             "qc_warnings": self.qc_warnings,
         }
 
@@ -271,6 +273,8 @@ def compute_cluster_evidence(
     cluster_key: str,
     n_top_genes: int = 20,
     reference_registry_path: Path | None = None,
+    sample_key: str = "",
+    batch_key: str = "",
 ) -> dict[str, ClusterEvidence]:
     """Compute per-cluster evidence: markers, CellTypist labels, reference matches."""
     if not path.exists() or importlib.util.find_spec("anndata") is None:
@@ -293,6 +297,7 @@ def compute_cluster_evidence(
 
     _fill_marker_evidence(adata, cluster_key, evidence, n_top_genes)
     _fill_qc_evidence(adata, cluster_key, evidence)
+    _fill_composition_evidence(adata, cluster_key, evidence, sample_key=sample_key, batch_key=batch_key)
     _fill_marker_db_evidence(evidence)
     _fill_celltypist_evidence(adata, cluster_key, evidence)
     if reference_registry_path and reference_registry_path.exists():
@@ -379,6 +384,46 @@ def _fill_qc_evidence(adata: Any, cluster_key: str, evidence: dict[str, ClusterE
             warning = _qc_metric_warning(canonical, cluster_id, stats, global_stats.get(canonical, {}))
             if warning and warning not in cluster_evidence.qc_warnings:
                 cluster_evidence.qc_warnings.append(warning)
+
+
+def _fill_composition_evidence(
+    adata: Any,
+    cluster_key: str,
+    evidence: dict[str, ClusterEvidence],
+    *,
+    sample_key: str = "",
+    batch_key: str = "",
+) -> None:
+    cluster_values = adata.obs[cluster_key].astype(str)
+    for canonical, obs_key in (("sample", sample_key), ("batch", batch_key)):
+        if not obs_key or obs_key not in adata.obs:
+            continue
+        values = adata.obs[obs_key].astype(str)
+        global_n_categories = int(values.value_counts(dropna=False).shape[0])
+        for cluster_id, cluster_evidence in evidence.items():
+            mask = cluster_values == cluster_id
+            counts = values.loc[mask].value_counts(dropna=False)
+            total = int(counts.sum())
+            if total <= 0 or counts.empty:
+                continue
+            dominant_label = str(counts.index[0])
+            dominant_count = int(counts.iloc[0])
+            fraction = dominant_count / total
+            cluster_evidence.composition[canonical] = {
+                "obs_key": str(obs_key),
+                "dominant": dominant_label,
+                "dominant_count": dominant_count,
+                "total": total,
+                "fraction": round(fraction, 3),
+                "n_categories": int(len(counts)),
+            }
+            if fraction >= 0.8 and global_n_categories > 1:
+                warning = (
+                    f"Cluster {cluster_id} is dominated by {canonical} '{dominant_label}' "
+                    f"({fraction:.0%}); inspect possible sample or batch effect."
+                )
+                if warning not in cluster_evidence.qc_warnings:
+                    cluster_evidence.qc_warnings.append(warning)
 
 
 def _numeric_values(series: Any) -> list[float]:
