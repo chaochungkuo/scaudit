@@ -126,6 +126,7 @@ def _write_report_html(
     )
 
     umap_html = _umap_section(cards, diagnosis) if cards else ""
+    completeness_html = _evidence_completeness_section(cards) if cards else ""
     marker_html = _marker_expression_section(cards) if cards else ""
     attention_html = _attention_panel(attention) if attention else ""
     warning_html = _warning_list(warnings) if warnings else ""
@@ -143,6 +144,7 @@ def _write_report_html(
     </section>
     <div class="metrics-grid">{metrics}</div>
     {umap_html}
+    {completeness_html}
     {marker_html}
     {attention_html}
     {warning_html}
@@ -352,6 +354,72 @@ def _grouped_traces(groups: dict[str, dict[str, list[Any]]], colors: dict[str, s
             },
         })
     return traces
+
+
+# ── Evidence completeness ────────────────────────────────────────────────────
+
+
+def _evidence_completeness_section(cards: list[dict[str, Any]]) -> str:
+    rows = [_evidence_completeness_row(card) for card in cards]
+    if not rows:
+        return ""
+    source_keys = ["markers", "marker_db", "model", "reference", "qc", "llm"]
+    complete_count = sum(1 for row in rows if all(row["sources"][key] for key in source_keys))
+    meta = f"{complete_count}/{len(rows)} clusters have all evidence sources"
+    header = "".join(f"<th>{html.escape(label)}</th>" for label in ["Cluster", "Markers", "Marker DB", "Model", "Reference", "QC", "LLM"])
+    body = "".join(_evidence_completeness_html(row) for row in rows)
+    return f"""
+    <section class="evidence-completeness">
+      <div class="section-header">
+        <h2>Evidence completeness</h2>
+        <span class="muted">{html.escape(meta)}</span>
+      </div>
+      <div class="completeness-wrap">
+        <table class="completeness-table">
+          <thead><tr>{header}</tr></thead>
+          <tbody>{body}</tbody>
+        </table>
+      </div>
+    </section>
+    """
+
+
+def _evidence_completeness_row(card: dict[str, Any]) -> dict[str, Any]:
+    evidence = card.get("evidence", {})
+    reasoning = card.get("reasoning", {})
+    references = evidence.get("references") or []
+    sources = {
+        "markers": bool(evidence.get("markers")),
+        "marker_db": any(isinstance(ref, dict) and ref.get("ref_id") == "builtin" for ref in references),
+        "model": bool(evidence.get("models")),
+        "reference": any(isinstance(ref, dict) and ref.get("ref_id") != "builtin" for ref in references),
+        "qc": bool(evidence.get("qc") or evidence.get("qc_warnings")),
+        "llm": reasoning.get("summary_source") == "llm",
+    }
+    return {
+        "cluster_id": str(card.get("cluster_id", "")),
+        "decision": str(card.get("decision", "")),
+        "sources": sources,
+    }
+
+
+def _evidence_completeness_html(row: dict[str, Any]) -> str:
+    cluster_id = str(row["cluster_id"])
+    sources = row["sources"]
+    cells = "".join(_completeness_cell(bool(sources[key])) for key in ["markers", "marker_db", "model", "reference", "qc", "llm"])
+    return (
+        f"<tr>"
+        f'<th><a href="#cluster-{html.escape(cluster_id)}">Cluster {html.escape(cluster_id)}</a></th>'
+        f"{cells}"
+        f"</tr>"
+    )
+
+
+def _completeness_cell(available: bool) -> str:
+    label = "Present" if available else "Missing"
+    css = "is-present" if available else "is-missing"
+    symbol = "OK" if available else "NA"
+    return f'<td><span class="completeness-dot {css}" title="{label}">{symbol}</span></td>'
 
 
 # ── Marker expression evidence ───────────────────────────────────────────────
@@ -1160,6 +1228,61 @@ _CSS = """
   }
   .umap-tab:hover { background: #eef2f9; color: var(--navy); }
   .umap-tab.is-active { background: var(--navy); color: white; }
+
+  /* ── Evidence completeness ── */
+  .evidence-completeness {
+    padding: 20px 24px;
+  }
+  .completeness-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .completeness-table {
+    width: 100%;
+    min-width: 640px;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .completeness-table th,
+  .completeness-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+    white-space: nowrap;
+  }
+  .completeness-table tr:last-child th,
+  .completeness-table tr:last-child td { border-bottom: none; }
+  .completeness-table thead th {
+    background: #f7f9fc;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .completeness-table tbody th {
+    text-align: left;
+    font-weight: 700;
+  }
+  .completeness-table tbody th a {
+    color: var(--navy);
+    text-decoration: none;
+  }
+  .completeness-table tbody th a:hover { color: var(--blue); text-decoration: underline; }
+  .completeness-dot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 20px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+  }
+  .completeness-dot.is-present { background: #e3f5ec; color: #1a6b3c; }
+  .completeness-dot.is-missing { background: #eef0f4; color: var(--muted); }
 
   /* ── Marker expression overview ── */
   .marker-section {
