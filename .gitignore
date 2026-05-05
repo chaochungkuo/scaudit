@@ -12,4 +12,6 @@ results/
 final/
 examples/*/data/
 examples/*/results/
+examples/*/results_*/
 examples/*/final/
+examples/*/final_*/
