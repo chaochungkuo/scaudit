@@ -80,6 +80,7 @@ class ClusterEvidence:
     celltypist_label: str | None = None
     celltypist_prob: float | None = None
     reference_matches: list[dict[str, Any]] = field(default_factory=list)
+    qc_metrics: dict[str, dict[str, float | str]] = field(default_factory=dict)
     qc_warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -89,6 +90,7 @@ class ClusterEvidence:
             "celltypist_label": self.celltypist_label,
             "celltypist_prob": self.celltypist_prob,
             "reference_matches": self.reference_matches,
+            "qc_metrics": self.qc_metrics,
             "qc_warnings": self.qc_warnings,
         }
 
@@ -290,6 +292,7 @@ def compute_cluster_evidence(
     query_gene_id_type = infer_gene_id_type(query_gene_counts)
 
     _fill_marker_evidence(adata, cluster_key, evidence, n_top_genes)
+    _fill_qc_evidence(adata, cluster_key, evidence)
     _fill_marker_db_evidence(evidence)
     _fill_celltypist_evidence(adata, cluster_key, evidence)
     if reference_registry_path and reference_registry_path.exists():
@@ -346,6 +349,85 @@ def _fill_marker_evidence(
             evidence[cluster_id].markers = markers
     except Exception:  # pragma: no cover - scanpy internals vary
         pass
+
+
+def _fill_qc_evidence(adata: Any, cluster_key: str, evidence: dict[str, ClusterEvidence]) -> None:
+    detected = _detect_qc_metadata(list(map(str, adata.obs.columns))).get("detected", {})
+    if not detected:
+        return
+
+    cluster_values = adata.obs[cluster_key].astype(str)
+    global_stats: dict[str, dict[str, float]] = {}
+    for canonical, obs_key in detected.items():
+        values = _numeric_values(adata.obs[obs_key])
+        if values:
+            global_stats[canonical] = _summarize_numeric(values)
+
+    for cluster_id, cluster_evidence in evidence.items():
+        mask = cluster_values == cluster_id
+        for canonical, obs_key in detected.items():
+            series = adata.obs.loc[mask, obs_key]
+            values = _numeric_values(series)
+            if not values:
+                continue
+            stats = _summarize_numeric(values)
+            cluster_evidence.qc_metrics[canonical] = {
+                "obs_key": str(obs_key),
+                "mean": round(stats["mean"], 3),
+                "median": round(stats["median"], 3),
+            }
+            warning = _qc_metric_warning(canonical, cluster_id, stats, global_stats.get(canonical, {}))
+            if warning and warning not in cluster_evidence.qc_warnings:
+                cluster_evidence.qc_warnings.append(warning)
+
+
+def _numeric_values(series: Any) -> list[float]:
+    values: list[float] = []
+    for value in list(series):
+        if isinstance(value, bool):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            values.append(number)
+    return values
+
+
+def _summarize_numeric(values: list[float]) -> dict[str, float]:
+    ordered = sorted(values)
+    count = len(ordered)
+    middle = count // 2
+    if count % 2:
+        median = ordered[middle]
+    else:
+        median = (ordered[middle - 1] + ordered[middle]) / 2
+    return {
+        "mean": sum(ordered) / count,
+        "median": median,
+    }
+
+
+def _qc_metric_warning(
+    canonical: str,
+    cluster_id: str,
+    stats: dict[str, float],
+    global_stats: dict[str, float],
+) -> str | None:
+    median = stats.get("median", 0.0)
+    mean = stats.get("mean", 0.0)
+    global_median = global_stats.get("median", 0.0)
+
+    if canonical == "pct_counts_mt" and max(mean, median) >= 20:
+        return f"Cluster {cluster_id} has high mitochondrial fraction ({median:.1f}% median); inspect for stressed or dying cells."
+    if canonical == "doublet_score" and max(mean, median) >= 0.25:
+        return f"Cluster {cluster_id} has elevated doublet score ({median:.2f} median); inspect for doublets."
+    if canonical == "n_genes" and median < 200:
+        return f"Cluster {cluster_id} has low detected genes ({median:.0f} median); inspect low-quality cells."
+    if canonical == "total_counts" and global_median > 0 and median < global_median * 0.25:
+        return f"Cluster {cluster_id} has low total counts ({median:.0f} median vs {global_median:.0f} global median)."
+    return None
 
 
 def _fill_marker_db_evidence(evidence: dict[str, ClusterEvidence]) -> None:

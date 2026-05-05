@@ -260,6 +260,7 @@ def _build_card(cluster_id: str, cell_count: int, ev: ClusterEvidence | None) ->
     celltypist_label = ev.celltypist_label if ev else None
     celltypist_prob = ev.celltypist_prob if ev else None
     ref_matches = ev.reference_matches if ev else []
+    qc_warnings = ev.qc_warnings if ev else []
 
     proposed_label, decision, confidence, reasoning, uncertainty = _assign_annotation(
         cluster_id=cluster_id,
@@ -268,6 +269,7 @@ def _build_card(cluster_id: str, cell_count: int, ev: ClusterEvidence | None) ->
         celltypist_label=celltypist_label,
         celltypist_prob=celltypist_prob,
         ref_matches=ref_matches,
+        qc_warnings=qc_warnings,
     )
 
     return {
@@ -284,7 +286,8 @@ def _build_card(cluster_id: str, cell_count: int, ev: ClusterEvidence | None) ->
             ),
             "references": ref_matches[:3],
             "ontology": [],
-            "qc_warnings": ev.qc_warnings if ev else [],
+            "qc": ev.qc_metrics if ev else {},
+            "qc_warnings": qc_warnings,
         },
         "uncertainty": uncertainty,
         "reasoning": reasoning,
@@ -304,11 +307,14 @@ def _assign_annotation(
     celltypist_label: str | None,
     celltypist_prob: float | None,
     ref_matches: list[dict[str, Any]],
+    qc_warnings: list[str] | None = None,
 ) -> tuple[str | None, str, dict[str, str], dict[str, Any], dict[str, str]]:
     supports: list[str] = []
     contradictions: list[str] = []
     uncertainties: list[str] = []
     suggestions: list[str] = []
+    qc_warnings = qc_warnings or []
+    artifact_qc_warnings = [warning for warning in qc_warnings if _is_artifact_qc_warning(warning)]
 
     # --- marker evidence ---
     strong_markers = [m for m in markers if _marker_strength(m) == "strong"]
@@ -399,11 +405,17 @@ def _assign_annotation(
     if cell_count < 10:
         suggestions.append(f"Very small cluster ({cell_count} cells); validate in QC metrics.")
         suggestions.append("Check if this cluster passes QC thresholds; consider removing or merging.")
+    if artifact_qc_warnings:
+        uncertainties.extend(artifact_qc_warnings)
+        suggestions.append("Review QC distributions before accepting this cluster annotation.")
 
     # --- decision + summary ---
     if cell_count < 10:
         decision = "Artifact warning"
         summary = f"Cluster {cluster_id} has only {cell_count} cells and may be a doublet or artifact."
+    elif artifact_qc_warnings:
+        decision = "Artifact warning"
+        summary = f"Cluster {cluster_id} has QC evidence consistent with a potential artifact."
     elif not markers and not celltypist_label and not ref_matches:
         decision = "Needs review"
         summary = f"Cluster {cluster_id}: no evidence has been computed yet."
@@ -442,6 +454,7 @@ def _assign_annotation(
         "model_disagreement": "high" if contradictions else "low" if celltypist_label else "unknown",
         "reference_distance": "low" if (best_ref and best_ref["jaccard"] >= 0.20) else "high" if best_ref else "unknown",
         "marker_inconsistency": "low" if len(strong_markers) >= 5 else "high" if not markers else "medium",
+        "qc_artifact": "high" if artifact_qc_warnings else "low" if qc_warnings else "unknown",
     }
     reasoning = {
         "summary": summary,
@@ -452,6 +465,19 @@ def _assign_annotation(
     }
 
     return proposed_label, decision, confidence, reasoning, uncertainty
+
+
+def _is_artifact_qc_warning(warning: str) -> bool:
+    lowered = warning.lower()
+    return any(
+        phrase in lowered
+        for phrase in (
+            "mitochondrial fraction",
+            "doublet score",
+            "low detected genes",
+            "low total counts",
+        )
+    )
 
 
 def _marker_strength(marker: Any) -> str:

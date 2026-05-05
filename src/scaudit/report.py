@@ -624,6 +624,7 @@ def _cluster_card(card: dict[str, Any]) -> str:
     markers = evidence.get("markers") or []
     models = evidence.get("models") or []
     references = evidence.get("references") or []
+    qc_metrics = evidence.get("qc") or {}
     qc_warnings = evidence.get("qc_warnings") or []
 
     is_open = decision in _NEEDS_ATTENTION
@@ -688,6 +689,9 @@ def _cluster_card(card: dict[str, Any]) -> str:
                 j_str = f" (J={j:.2f})" if isinstance(j, (int, float)) else ""
                 ref_lines.append(f"{ref_id}:{lbl}{j_str}")
             ev_rows.append(("References", ", ".join(ref_lines)))
+    qc_line = _format_qc_metrics(qc_metrics)
+    if qc_line:
+        ev_rows.append(("QC metrics", qc_line))
     if qc_warnings:
         ev_rows.append(("QC flags", "; ".join(str(w) for w in qc_warnings)))
 
@@ -739,6 +743,28 @@ def _cluster_card(card: dict[str, Any]) -> str:
         f'  <div class="cluster-body">{card_body}</div>\n'
         f"</details>"
     )
+
+
+def _format_qc_metrics(qc_metrics: Any) -> str:
+    if not isinstance(qc_metrics, dict):
+        return ""
+    labels = {
+        "n_genes": "genes",
+        "total_counts": "counts",
+        "pct_counts_mt": "mito %",
+        "doublet_score": "doublet",
+    }
+    parts = []
+    for key in ("n_genes", "total_counts", "pct_counts_mt", "doublet_score"):
+        metric = qc_metrics.get(key)
+        if not isinstance(metric, dict):
+            continue
+        mean = metric.get("mean")
+        median = metric.get("median")
+        if not isinstance(mean, (int, float)) or not isinstance(median, (int, float)):
+            continue
+        parts.append(f"{labels[key]} median {median:g}, mean {mean:g}")
+    return "; ".join(parts)
 
 
 def _marker_bar_block(markers: list[Any]) -> str:

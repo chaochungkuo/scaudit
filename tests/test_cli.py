@@ -14,11 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from scaudit.config import load_config, validate_config
 from scaudit.cli import collect_capabilities, main
-from scaudit.data import _reference_gene_warnings, infer_gene_id_counts, infer_gene_id_type, summarize_cluster_key
+from scaudit.data import _qc_metric_warning, _reference_gene_warnings, infer_gene_id_counts, infer_gene_id_type, summarize_cluster_key
 from scaudit.llm import OpenAICompatibleClient, enrich_cards_with_llm
 from scaudit.markers import attach_marker_evidence, marker_rows_from_rank_genes_groups
 from scaudit.report import render_draft_report
-from scaudit.run import _llm_settings, build_annotation_cards
+from scaudit.run import _assign_annotation, _llm_settings, build_annotation_cards
 
 
 class CliTests(unittest.TestCase):
@@ -99,6 +99,32 @@ class CliTests(unittest.TestCase):
 
         self.assertIn("Reference ref_a gene ID type is human_ensembl", warnings[0])
         self.assertIn("Only 0% of query marker genes were found in reference ref_a", warnings[1])
+
+    def test_qc_warning_can_trigger_artifact_decision(self) -> None:
+        warning = _qc_metric_warning(
+            "pct_counts_mt",
+            "0",
+            {"mean": 25.0, "median": 22.0},
+            {"mean": 8.0, "median": 7.0},
+        )
+
+        self.assertIsNotNone(warning)
+        proposed_label, decision, confidence, reasoning, uncertainty = _assign_annotation(
+            cluster_id="0",
+            cell_count=100,
+            markers=[],
+            celltypist_label=None,
+            celltypist_prob=None,
+            ref_matches=[],
+            qc_warnings=[str(warning)],
+        )
+
+        self.assertIsNone(proposed_label)
+        self.assertEqual(decision, "Artifact warning")
+        self.assertEqual(confidence["overall"], "unknown")
+        self.assertIn("potential artifact", reasoning["summary"])
+        self.assertEqual(uncertainty["qc_artifact"], "high")
+        self.assertIn(str(warning), reasoning["uncertainties"])
 
     def test_cluster_diagnostics_flags_tiny_and_missing_clusters(self) -> None:
         diagnosis = summarize_cluster_key({"0": 25, "1": 8}, missing_values=2)
@@ -306,6 +332,10 @@ class CliTests(unittest.TestCase):
                                 "references": [],
                                 "ontology": [],
                                 "qc_warnings": [],
+                                "qc": {
+                                    "pct_counts_mt": {"obs_key": "pct_counts_mt", "mean": 12.5, "median": 10.2},
+                                    "n_genes": {"obs_key": "n_genes_by_counts", "mean": 900.0, "median": 850.0},
+                                },
                             },
                             "reasoning": {
                                 "summary": "review",
@@ -337,6 +367,8 @@ class CliTests(unittest.TestCase):
             self.assertIn("Marker expression", html)
             self.assertIn("window.scauditMarkerHeatmap", html)
             self.assertIn("colorscale", html)
+            self.assertIn("QC metrics", html)
+            self.assertIn("mito % median 10.2", html)
             self.assertIn("CD3D", html)
             self.assertIn("log2FC: +1.70", html)
             self.assertIn("window.scauditUMAPTraces", html)
