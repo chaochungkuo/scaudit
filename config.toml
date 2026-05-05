@@ -57,7 +57,7 @@ provider = "openai"
 mode = "explain_only"
 base_url = "https://chat.kiconnect.nrw/api/v1"
 api_key_env = "KICONNECT_API_KEY"
-model = "gpt-4o-mini"
+model = "gpt-5.2"
 temperature = 0
 
 [report]
