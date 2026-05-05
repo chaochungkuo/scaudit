@@ -17,6 +17,8 @@ scaudit turns cluster annotation into structured evidence records, confidence ca
 
 **Core thesis**: annotation = Evidence + Reasoning + Decision.
 
+Current status: early MVP development. The current vertical slice supports `.h5ad` diagnosis, config validation, run planning, marker evidence generation, builtin marker matching, optional model/LLM evidence, draft annotation cards, review tables, reproducibility records, and static HTML reports.
+
 ---
 
 ## Quickstart
@@ -48,7 +50,8 @@ pip install -e .
 ```text
 results/
 ├── config.resolved.toml      # Exact parameters used
-├── diagnosis.json            # Dataset structure + UMAP coords
+├── diagnosis.json            # Dataset structure, gene IDs, QC metadata, UMAP coords
+├── marker_evidence.csv       # Cluster-level ranked markers
 ├── annotation_cards.json     # Per-cluster evidence + decisions
 ├── annotation_summary.csv    # Summary table
 ├── review_table.csv          # Editable human-review worksheet
@@ -111,6 +114,16 @@ scaudit diagnose input.h5ad --cluster-key leiden
 ```bash
 scaudit doctor
 ```
+
+## Roadmap
+
+Near-term development is focused on completing a public-dataset end-to-end run:
+
+1. Run the current workflow on a small public `.h5ad`, such as PBMC3k.
+2. Harden marker evidence on real clustered data.
+3. Add a conservative decision engine for `Accepted`, `Ambiguous`, `Unknown`, `Needs review`, and `Artifact warning`.
+4. Add model or reference evidence so marker evidence can be compared against an independent source.
+5. Finalize draft annotations through review import and final report generation.
 
 ## Development
 
