@@ -288,12 +288,14 @@ def _umap_plotly(cards: list[dict[str, Any]], umap_coords: dict[str, Any] | None
       </div>
       <div id="umap-plot" style="width:100%;height:100%"></div>
     </div>
-    <script async src="{_PLOTLY_CDN}" onload="scauditRenderUMAP()"></script>
+    <script async src="{_PLOTLY_CDN}" onload="scauditRenderPlots()"></script>
     <script>
     window.scauditUMAPTraces = {trace_sets_json};
     window.scauditUMAPLayout = {layout_json};
     window.scauditUMAPConfig = {config_json};
     window.scauditRenderUMAP = function() {{
+      if (window.scauditUMAPRendered) {{ return; }}
+      window.scauditUMAPRendered = true;
       document.getElementById('umap-loading').style.display = 'none';
       Plotly.newPlot('umap-plot', window.scauditUMAPTraces.cluster, window.scauditUMAPLayout, window.scauditUMAPConfig);
       document.querySelectorAll('[data-umap-mode]').forEach(function(button) {{
@@ -304,6 +306,10 @@ def _umap_plotly(cards: list[dict[str, Any]], umap_coords: dict[str, Any] | None
           Plotly.react('umap-plot', window.scauditUMAPTraces[mode], window.scauditUMAPLayout, window.scauditUMAPConfig);
         }});
       }});
+    }};
+    window.scauditRenderPlots = function() {{
+      if (window.scauditRenderUMAP) {{ window.scauditRenderUMAP(); }}
+      if (window.scauditRenderMarkerHeatmap) {{ window.scauditRenderMarkerHeatmap(); }}
     }};
     </script>"""
 
@@ -345,24 +351,84 @@ def _marker_expression_section(cards: list[dict[str, Any]]) -> str:
         return ""
 
     clusters = [str(card.get("cluster_id", "")) for card in cards]
-    max_abs = max(
+    z_values: list[list[float | None]] = []
+    hover_text: list[list[str]] = []
+    finite_values = [
         abs(value)
         for row in matrix
         for value in row["values"].values()
         if isinstance(value, (int, float)) and math.isfinite(value)
-    )
+    ]
+    max_abs = max(finite_values, default=1.0)
     if max_abs <= 0:
         max_abs = 1.0
 
-    header_cells = "".join(f"<th>Cluster {html.escape(cluster_id)}</th>" for cluster_id in clusters)
-    rows = []
     for row in matrix:
         gene = str(row["gene"])
-        cells = []
+        z_row: list[float | None] = []
+        hover_row: list[str] = []
         for cluster_id in clusters:
             value = row["values"].get(cluster_id)
-            cells.append(_marker_heatmap_cell(value, max_abs))
-        rows.append(f"<tr><th>{html.escape(gene)}</th>{''.join(cells)}</tr>")
+            if value is None or not math.isfinite(value):
+                z_row.append(None)
+                hover_row.append(f"Gene: {gene}<br>Cluster: {cluster_id}<br>No marker evidence")
+            else:
+                z_row.append(value)
+                hover_row.append(f"Gene: {gene}<br>Cluster: {cluster_id}<br>log2FC: {value:+.2f}")
+        z_values.append(z_row)
+        hover_text.append(hover_row)
+
+    genes = [str(row["gene"]) for row in matrix]
+    trace = {
+        "type": "heatmap",
+        "x": [f"Cluster {cluster_id}" for cluster_id in clusters],
+        "y": genes,
+        "z": z_values,
+        "text": hover_text,
+        "hovertemplate": "%{text}<extra></extra>",
+        "zmin": -max_abs,
+        "zmax": max_abs,
+        "zmid": 0,
+        "colorscale": [
+            [0.0, "#2166ac"],
+            [0.35, "#d1e5f0"],
+            [0.5, "#f7f7f7"],
+            [0.65, "#fddbc7"],
+            [1.0, "#b2182b"],
+        ],
+        "colorbar": {
+            "title": {"text": "log2FC", "side": "right"},
+            "len": 0.82,
+            "thickness": 14,
+            "outlinewidth": 0,
+        },
+        "xgap": 1,
+        "ygap": 1,
+    }
+    height = max(340, min(860, 120 + len(genes) * 18))
+    layout = {
+        "height": height,
+        "paper_bgcolor": "rgba(0,0,0,0)",
+        "plot_bgcolor": "#ffffff",
+        "margin": {"l": 92, "r": 66, "t": 10, "b": 76},
+        "xaxis": {
+            "side": "bottom",
+            "tickangle": -35,
+            "showgrid": False,
+            "zeroline": False,
+            "ticks": "",
+            "title": {"text": ""},
+        },
+        "yaxis": {
+            "autorange": "reversed",
+            "showgrid": False,
+            "zeroline": False,
+            "ticks": "",
+            "title": {"text": ""},
+        },
+        "font": {"family": "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", "size": 12, "color": "#253447"},
+    }
+    config = {"responsive": True, "displaylogo": False}
 
     return f"""
     <section class="marker-section">
@@ -370,12 +436,25 @@ def _marker_expression_section(cards: list[dict[str, Any]]) -> str:
         <h2>Marker expression evidence</h2>
         <span class="muted">Top mentioned genes · log2FC heatmap</span>
       </div>
-      <div class="marker-heatmap-wrap">
-        <table class="marker-heatmap">
-          <thead><tr><th>Gene</th>{header_cells}</tr></thead>
-          <tbody>{''.join(rows)}</tbody>
-        </table>
+      <div class="marker-plot-wrap">
+        <div id="marker-heatmap-loading" class="marker-plot-loading">Loading marker heatmap&hellip; (requires internet access)</div>
+        <div id="marker-heatmap" style="width:100%;height:{height}px"></div>
       </div>
+      <script>
+      window.scauditMarkerHeatmap = {{
+        trace: {json.dumps(trace)},
+        layout: {json.dumps(layout)},
+        config: {json.dumps(config)}
+      }};
+      window.scauditRenderMarkerHeatmap = function() {{
+        if (window.scauditMarkerHeatmapRendered) {{ return; }}
+        window.scauditMarkerHeatmapRendered = true;
+        var loading = document.getElementById('marker-heatmap-loading');
+        if (loading) {{ loading.style.display = 'none'; }}
+        Plotly.newPlot('marker-heatmap', [window.scauditMarkerHeatmap.trace], window.scauditMarkerHeatmap.layout, window.scauditMarkerHeatmap.config);
+      }};
+      if (window.Plotly) {{ window.scauditRenderMarkerHeatmap(); }}
+      </script>
     </section>
     """
 
@@ -397,18 +476,6 @@ def _marker_heatmap_matrix(cards: list[dict[str, Any]], *, per_cluster: int = 5,
             values_by_gene[gene][cluster_id] = value
 
     return [{"gene": gene, "values": values_by_gene[gene]} for gene in genes[:max_genes]]
-
-
-def _marker_heatmap_cell(value: float | None, max_abs: float) -> str:
-    if value is None or not math.isfinite(value):
-        return '<td class="marker-empty">—</td>'
-    ratio = min(abs(value) / max_abs, 1.0)
-    alpha = 0.12 + (0.66 * ratio)
-    color = f"rgba(42, 157, 92, {alpha:.2f})" if value >= 0 else f"rgba(192, 57, 43, {alpha:.2f})"
-    return (
-        f'<td class="marker-heat" style="background:{color}" '
-        f'title="log2FC {value:+.2f}">{value:+.2f}</td>'
-    )
 
 
 # ── Review HTML ───────────────────────────────────────────────────────────────
@@ -1025,49 +1092,25 @@ _CSS = """
   .marker-section {
     margin-bottom: 16px;
   }
-  .marker-heatmap-wrap {
-    overflow-x: auto;
+  .marker-plot-wrap {
+    position: relative;
+    min-height: 340px;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--card);
     box-shadow: var(--shadow);
+    overflow: hidden;
   }
-  .marker-heatmap {
-    width: 100%;
-    min-width: 680px;
-    border-collapse: collapse;
-    font-size: 12px;
-  }
-  .marker-heatmap th,
-  .marker-heatmap td {
-    border-bottom: 1px solid var(--border);
-    border-right: 1px solid var(--border);
-    padding: 7px 9px;
-    text-align: center;
-    white-space: nowrap;
-  }
-  .marker-heatmap th {
-    background: #f7f9fc;
-    color: var(--muted);
-    font-weight: 700;
-  }
-  .marker-heatmap tbody th {
+  .marker-plot-loading {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--card);
     color: var(--navy);
-    text-align: left;
-    position: sticky;
-    left: 0;
-    z-index: 1;
-  }
-  .marker-heatmap tr:last-child th,
-  .marker-heatmap tr:last-child td { border-bottom: none; }
-  .marker-heat,
-  .marker-empty {
-    font-variant-numeric: tabular-nums;
-    color: var(--navy);
-  }
-  .marker-empty {
-    background: #fafbfd;
-    color: var(--muted);
+    font-size: 13px;
   }
 
   /* ── Attention panel ── */
