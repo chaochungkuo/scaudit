@@ -1,0 +1,81 @@
+[project]
+name = "scaudit_run"
+description = "Single-cell annotation audit"
+
+[dataset]
+path = "examples/pbmc3k/data/pbmc3k_scaudit.h5ad"
+species = "human"
+tissue = "blood"
+cluster_key = "scaudit_cluster"
+sample_key = "sample"
+condition_key = ""
+batch_key = ""
+
+[gene_harmonization]
+input_gene_id_type = "auto"
+reference_gene_id_type = "auto"
+normalize_symbols = true
+ortholog_map = "none"
+min_gene_overlap_warning = 0.70
+min_gene_overlap_strong_warning = 0.50
+
+[references]
+auto_select = true
+max_references = 3
+registry = "default"
+cache_dir = "references"
+selected = []
+allow_condition_mismatch = true
+require_species_match = true
+
+[methods]
+marker_based = true
+reference_based = false
+ontology_based = false
+
+[methods.model_based]
+celltypist = false
+scanvi = false
+scvi = false
+
+[methods.qc]
+enabled = true
+doublet_warning = true
+ambient_rna_warning = true
+low_quality_warning = true
+
+[decision]
+unit = "cluster"
+confidence_mode = "categorical"
+prefer_lineage_over_subtype = true
+allow_unknown = true
+allow_ambiguous = true
+
+[llm]
+enabled = true
+provider = "openai"
+mode = "explain_only"
+base_url = "https://chat.kiconnect.nrw/api/v1"
+api_key_env = "KICONNECT_API_KEY"
+model = "gpt-4o-mini"
+temperature = 0
+
+[report]
+enabled = true
+format = "html"
+multi_page = true
+theme = "scaudit"
+include_methods = true
+include_reproducibility = true
+include_cluster_pages = true
+include_condition_comparison = false
+
+[output]
+dir = "examples/pbmc3k/results_llm"
+draft_h5ad = true
+final_h5ad = true
+annotation_cards = true
+summary_tables = true
+review_table = true
+reproducibility = true
+figures = true
