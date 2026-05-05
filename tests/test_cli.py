@@ -450,6 +450,55 @@ class CliTests(unittest.TestCase):
             self.assertIn("log2FC: +1.70", html)
             self.assertIn("window.scauditUMAPTraces", html)
 
+    def test_debug_command_prints_cluster_evidence_panel(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            run_dir = temp_path / "results"
+            run_dir.mkdir()
+            (run_dir / "annotation_cards.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "cluster_id": "0",
+                            "proposed_label": "T cell",
+                            "decision": "Needs review",
+                            "confidence": {"overall": "medium", "lineage": "medium", "subtype": "unknown"},
+                            "evidence": {
+                                "markers": [{"gene": "CD3D", "score": 8.2, "log2fc": 1.7, "pval_adj": 0.0001}],
+                                "models": [{"model": "CellTypist", "label": "T cell", "probability": 0.82}],
+                                "references": [{"ref_id": "pbmc_ref", "label": "CD4 T cell", "jaccard": 0.18, "n_shared": 6}],
+                                "qc": {"pct_counts_mt": {"obs_key": "pct_counts_mt", "mean": 8.0, "median": 7.0}},
+                                "qc_warnings": [],
+                            },
+                            "reasoning": {
+                                "summary": "Cluster 0 has T cell evidence.",
+                                "supports": ["CD3D supports T cell identity"],
+                                "contradictions": [],
+                                "uncertainties": [],
+                                "validation_suggestions": [],
+                            },
+                            "uncertainty": {"marker_inconsistency": "medium"},
+                            "provenance": {"cell_count": 10},
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            output = io.StringIO()
+            with redirect_stdout(output):
+                main(["debug", "--run", str(run_dir), "--cluster", "0"])
+
+            text = output.getvalue()
+            self.assertIn("Cluster 0 debug", text)
+            self.assertIn("Decision path", text)
+            self.assertIn("Top markers", text)
+            self.assertIn("CD3D", text)
+            self.assertIn("Model evidence", text)
+            self.assertIn("Reference evidence", text)
+            self.assertIn("QC evidence", text)
+            self.assertIn("Reasoning", text)
+
     def test_llm_settings_reads_config_values(self) -> None:
         settings = _llm_settings(
             {

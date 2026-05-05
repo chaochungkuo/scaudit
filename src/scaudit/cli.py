@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import platform
 import sys
 from dataclasses import dataclass
@@ -99,6 +100,124 @@ def doctor() -> None:
 
 def version() -> None:
     print(f"scaudit {__version__}")
+
+
+def debug(args: Sequence[str]) -> None:
+    run_dir = Path("results")
+    cluster_id = ""
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--run" and index + 1 < len(args):
+            run_dir = Path(args[index + 1])
+            index += 2
+        elif token == "--cluster" and index + 1 < len(args):
+            cluster_id = args[index + 1]
+            index += 2
+        else:
+            print(f"Unknown option for debug: {token}", file=sys.stderr)
+            raise SystemExit(2)
+
+    if not cluster_id:
+        print("ERROR: --cluster is required", file=sys.stderr)
+        raise SystemExit(2)
+
+    try:
+        card = _load_debug_card(run_dir, cluster_id)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    _print_debug_card(card)
+
+
+def _load_debug_card(run_dir: Path, cluster_id: str) -> dict:
+    cards_path = run_dir / "annotation_cards.json"
+    if not cards_path.exists():
+        cards_path = run_dir / "final_annotation_cards.json"
+    if not cards_path.exists():
+        raise FileNotFoundError(f"annotation cards not found in {run_dir}")
+    cards = json.loads(cards_path.read_text(encoding="utf-8"))
+    for card in cards:
+        if str(card.get("cluster_id", "")) == str(cluster_id):
+            return card
+    raise ValueError(f"cluster {cluster_id} was not found in {cards_path}")
+
+
+def _print_debug_card(card: dict) -> None:
+    cluster_id = str(card.get("cluster_id", ""))
+    evidence = card.get("evidence", {})
+    confidence = card.get("confidence", {})
+    reasoning = card.get("reasoning", {})
+    uncertainty = card.get("uncertainty", {})
+    review = card.get("review", {})
+
+    print(f"Cluster {cluster_id} debug")
+    print()
+    print_status_table(
+        "Decision path",
+        [
+            ("Proposed label", "OK" if card.get("proposed_label") else "WARN", str(card.get("proposed_label") or "pending")),
+            ("Decision", str(card.get("decision") or "UNKNOWN"), f"overall confidence: {confidence.get('overall', 'unknown')}"),
+            ("Final label", "OK" if card.get("final_label") else "SKIPPED", str(card.get("final_label") or "")),
+            ("Review", str(review.get("status") or "not_reviewed"), str(review.get("reviewer_note") or "")),
+        ],
+    )
+
+    marker_rows = []
+    for marker in (evidence.get("markers") or [])[:8]:
+        if isinstance(marker, dict):
+            marker_rows.append(
+                (
+                    str(marker.get("gene") or ""),
+                    f"log2FC {marker.get('log2fc', marker.get('logfoldchange', ''))}",
+                    f"score {marker.get('score', '')}, padj {marker.get('pval_adj', marker.get('pvalue_adj', ''))}",
+                )
+            )
+    print_status_table("Top markers", marker_rows or [("none", "SKIPPED", "no marker evidence")])
+
+    model_rows = [
+        (
+            str(model.get("model") or model.get("name") or "model"),
+            str(model.get("label") or ""),
+            f"probability {model.get('probability', model.get('score', ''))}",
+        )
+        for model in evidence.get("models") or []
+        if isinstance(model, dict)
+    ]
+    print_status_table("Model evidence", model_rows or [("none", "SKIPPED", "no model evidence")])
+
+    reference_rows = [
+        (
+            str(ref.get("ref_id") or ref.get("reference") or "reference"),
+            str(ref.get("label") or ""),
+            f"Jaccard {ref.get('jaccard', ref.get('similarity', ''))}, shared {ref.get('n_shared', '')}",
+        )
+        for ref in evidence.get("references") or []
+        if isinstance(ref, dict)
+    ]
+    print_status_table("Reference evidence", reference_rows or [("none", "SKIPPED", "no reference evidence")])
+
+    qc_rows = []
+    qc_metrics = evidence.get("qc") or {}
+    if isinstance(qc_metrics, dict):
+        for key, value in qc_metrics.items():
+            if isinstance(value, dict):
+                qc_rows.append((str(key), f"median {value.get('median', '')}", f"mean {value.get('mean', '')}, obs_key {value.get('obs_key', '')}"))
+    for warning in evidence.get("qc_warnings") or []:
+        qc_rows.append(("warning", "WARN", str(warning)))
+    print_status_table("QC evidence", qc_rows or [("none", "SKIPPED", "no QC evidence")])
+
+    reasoning_rows = []
+    if reasoning.get("summary"):
+        reasoning_rows.append(("summary", "INFO", str(reasoning.get("summary"))))
+    for key in ("supports", "contradictions", "uncertainties", "validation_suggestions"):
+        for item in reasoning.get(key) or []:
+            reasoning_rows.append((key, "INFO", str(item)))
+    print_status_table("Reasoning", reasoning_rows or [("none", "SKIPPED", "no reasoning")])
+
+    uncertainty_rows = [(str(key), str(value), "") for key, value in uncertainty.items()]
+    print_status_table("Uncertainty", uncertainty_rows or [("none", "SKIPPED", "no uncertainty fields")])
 
 
 def annotate(args: Sequence[str]) -> None:
@@ -597,6 +716,7 @@ def _print_help() -> None:
     print("  scaudit --help")
     print("  scaudit version")
     print("  scaudit doctor")
+    print("  scaudit debug --run results/ --cluster 7")
     print("  scaudit annotate input.h5ad --cluster-key leiden --sample-key sample --species mouse --tissue heart --out results/")
     print("  scaudit diagnose input.h5ad --cluster-key leiden --sample-key sample --out results/")
     print("  scaudit init-config input.h5ad --format toml --out config.toml")
@@ -613,6 +733,7 @@ def _print_help() -> None:
     print()
     print("Commands:")
     print("  annotate     Full annotation audit from h5ad in one command")
+    print("  debug        Show a focused per-cluster evidence panel")
     print("  diagnose     Inspect dataset structure and metadata")
     print("  doctor       Show environment capability checks")
     print("  finalize     Freeze a draft run and optionally write annotated.h5ad")
@@ -633,6 +754,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     command = args[0]
     if command == "annotate":
         annotate(args[1:])
+        return
+    if command == "debug":
+        debug(args[1:])
         return
     if command == "diagnose":
         diagnose(args[1:])
