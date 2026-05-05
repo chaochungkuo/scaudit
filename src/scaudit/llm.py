@@ -75,7 +75,11 @@ def enrich_cards_with_llm(
         try:
             summary = _generate_summary(client, card, resolved_model, temperature)
             if summary:
-                card.setdefault("reasoning", {})["summary"] = summary
+                reasoning = card.setdefault("reasoning", {})
+                reasoning["summary"] = summary
+                reasoning["summary_source"] = "llm"
+                reasoning["summary_provider"] = resolved_provider
+                reasoning["summary_model"] = resolved_model
         except Exception:  # pragma: no cover - API errors should never crash the pipeline
             continue
 
