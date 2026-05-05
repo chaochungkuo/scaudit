@@ -114,6 +114,7 @@ def _write_report_html(
     )
 
     umap_html = _umap_section(cards, diagnosis) if cards else ""
+    marker_html = _marker_expression_section(cards) if cards else ""
     attention_html = _attention_panel(attention) if attention else ""
     warning_html = _warning_list(warnings) if warnings else ""
     clusters_html = _cluster_list(cards)
@@ -130,6 +131,7 @@ def _write_report_html(
     </section>
     <div class="metrics-grid">{metrics}</div>
     {umap_html}
+    {marker_html}
     {attention_html}
     {warning_html}
     {clusters_html}
@@ -332,6 +334,81 @@ def _grouped_traces(groups: dict[str, dict[str, list[Any]]], colors: dict[str, s
             },
         })
     return traces
+
+
+# ── Marker expression evidence ───────────────────────────────────────────────
+
+
+def _marker_expression_section(cards: list[dict[str, Any]]) -> str:
+    matrix = _marker_heatmap_matrix(cards)
+    if not matrix:
+        return ""
+
+    clusters = [str(card.get("cluster_id", "")) for card in cards]
+    max_abs = max(
+        abs(value)
+        for row in matrix
+        for value in row["values"].values()
+        if isinstance(value, (int, float)) and math.isfinite(value)
+    )
+    if max_abs <= 0:
+        max_abs = 1.0
+
+    header_cells = "".join(f"<th>Cluster {html.escape(cluster_id)}</th>" for cluster_id in clusters)
+    rows = []
+    for row in matrix:
+        gene = str(row["gene"])
+        cells = []
+        for cluster_id in clusters:
+            value = row["values"].get(cluster_id)
+            cells.append(_marker_heatmap_cell(value, max_abs))
+        rows.append(f"<tr><th>{html.escape(gene)}</th>{''.join(cells)}</tr>")
+
+    return f"""
+    <section class="marker-section">
+      <div class="section-header">
+        <h2>Marker expression evidence</h2>
+        <span class="muted">Top mentioned genes · log2FC heatmap</span>
+      </div>
+      <div class="marker-heatmap-wrap">
+        <table class="marker-heatmap">
+          <thead><tr><th>Gene</th>{header_cells}</tr></thead>
+          <tbody>{''.join(rows)}</tbody>
+        </table>
+      </div>
+    </section>
+    """
+
+
+def _marker_heatmap_matrix(cards: list[dict[str, Any]], *, per_cluster: int = 5, max_genes: int = 40) -> list[dict[str, Any]]:
+    genes: list[str] = []
+    values_by_gene: dict[str, dict[str, float]] = {}
+    for card in cards:
+        cluster_id = str(card.get("cluster_id", ""))
+        markers = _marker_dicts(card.get("evidence", {}).get("markers") or [])[:per_cluster]
+        for marker in markers:
+            gene = str(marker.get("gene") or "")
+            value = _marker_log2fc(marker)
+            if not gene or value is None:
+                continue
+            if gene not in values_by_gene:
+                values_by_gene[gene] = {}
+                genes.append(gene)
+            values_by_gene[gene][cluster_id] = value
+
+    return [{"gene": gene, "values": values_by_gene[gene]} for gene in genes[:max_genes]]
+
+
+def _marker_heatmap_cell(value: float | None, max_abs: float) -> str:
+    if value is None or not math.isfinite(value):
+        return '<td class="marker-empty">—</td>'
+    ratio = min(abs(value) / max_abs, 1.0)
+    alpha = 0.12 + (0.66 * ratio)
+    color = f"rgba(42, 157, 92, {alpha:.2f})" if value >= 0 else f"rgba(192, 57, 43, {alpha:.2f})"
+    return (
+        f'<td class="marker-heat" style="background:{color}" '
+        f'title="log2FC {value:+.2f}">{value:+.2f}</td>'
+    )
 
 
 # ── Review HTML ───────────────────────────────────────────────────────────────
@@ -546,6 +623,10 @@ def _cluster_card(card: dict[str, Any]) -> str:
             f"</div>"
         )
 
+    marker_bars = _marker_bar_block(markers)
+    if marker_bars:
+        body_parts.append(marker_bars)
+
     # ── Reasoning block ──
     r_parts: list[str] = []
     if supports:
@@ -579,6 +660,81 @@ def _cluster_card(card: dict[str, Any]) -> str:
         f'  <div class="cluster-body">{card_body}</div>\n'
         f"</details>"
     )
+
+
+def _marker_bar_block(markers: list[Any]) -> str:
+    rows = _marker_dicts(markers)[:8]
+    if not rows:
+        return ""
+
+    values = [_marker_log2fc(row) for row in rows]
+    max_value = max((abs(value) for value in values if value is not None and math.isfinite(value)), default=0.0)
+    if max_value <= 0:
+        max_value = 1.0
+
+    row_html = "".join(_marker_bar_row(row, max_value) for row in rows)
+    if not row_html:
+        return ""
+
+    return (
+        f'<div class="card-block marker-bars-block">'
+        f'<p class="block-title">Marker expression</p>'
+        f'<div class="marker-bars" role="table" aria-label="Marker expression log2FC">{row_html}</div>'
+        f"</div>"
+    )
+
+
+def _marker_bar_row(marker: dict[str, Any], max_value: float) -> str:
+    gene = str(marker.get("gene") or "")
+    value = _marker_log2fc(marker)
+    if not gene or value is None or not math.isfinite(value):
+        return ""
+
+    score = _optional_number(marker.get("score"))
+    pval = _optional_number(marker.get("pval_adj", marker.get("pvalue_adj")))
+    width = max(4.0, min(abs(value) / max_value, 1.0) * 100)
+    bar_class = "marker-bar-positive" if value >= 0 else "marker-bar-negative"
+    score_text = f"score {score:.2f}" if score is not None else ""
+    pval_text = f"padj {_format_pvalue(pval)}" if pval is not None else ""
+    meta = " · ".join(part for part in [f"log2FC {value:+.2f}", score_text, pval_text] if part)
+    return (
+        f'<div class="marker-bar-row" role="row">'
+        f'<span class="marker-gene" role="cell">{html.escape(gene)}</span>'
+        f'<span class="marker-bar-track" role="cell">'
+        f'<span class="marker-bar {bar_class}" style="width:{width:.1f}%"></span>'
+        f"</span>"
+        f'<span class="marker-stat" role="cell">{html.escape(meta)}</span>'
+        f"</div>"
+    )
+
+
+def _marker_dicts(markers: list[Any]) -> list[dict[str, Any]]:
+    return [marker for marker in markers if isinstance(marker, dict) and marker.get("gene")]
+
+
+def _marker_log2fc(marker: dict[str, Any]) -> float | None:
+    return _optional_number(marker.get("log2fc", marker.get("logfoldchange")))
+
+
+def _optional_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        try:
+            number = float(str(value))
+        except (TypeError, ValueError):
+            return None
+    return number if math.isfinite(number) else None
+
+
+def _format_pvalue(value: float) -> str:
+    if value == 0:
+        return "<1e-300"
+    if value < 0.001:
+        return f"{value:.1e}"
+    return f"{value:.3f}"
 
 
 def _rblock(label: str, items: list[Any], css_class: str) -> str:
@@ -865,6 +1021,55 @@ _CSS = """
   .umap-tab:hover { background: #eef2f9; color: var(--navy); }
   .umap-tab.is-active { background: var(--navy); color: white; }
 
+  /* ── Marker expression overview ── */
+  .marker-section {
+    margin-bottom: 16px;
+  }
+  .marker-heatmap-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    box-shadow: var(--shadow);
+  }
+  .marker-heatmap {
+    width: 100%;
+    min-width: 680px;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .marker-heatmap th,
+  .marker-heatmap td {
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    padding: 7px 9px;
+    text-align: center;
+    white-space: nowrap;
+  }
+  .marker-heatmap th {
+    background: #f7f9fc;
+    color: var(--muted);
+    font-weight: 700;
+  }
+  .marker-heatmap tbody th {
+    color: var(--navy);
+    text-align: left;
+    position: sticky;
+    left: 0;
+    z-index: 1;
+  }
+  .marker-heatmap tr:last-child th,
+  .marker-heatmap tr:last-child td { border-bottom: none; }
+  .marker-heat,
+  .marker-empty {
+    font-variant-numeric: tabular-nums;
+    color: var(--navy);
+  }
+  .marker-empty {
+    background: #fafbfd;
+    color: var(--muted);
+  }
+
   /* ── Attention panel ── */
   .attention-panel {
     background: #fffaf2;
@@ -1003,6 +1208,58 @@ _CSS = """
   .ev-list dd {
     margin: 0; font-size: 13px; line-height: 1.5;
     word-break: break-word;
+  }
+  .marker-bars-block {
+    overflow: hidden;
+  }
+  .marker-bars {
+    display: grid;
+    gap: 6px;
+  }
+  .marker-bar-row {
+    display: grid;
+    grid-template-columns: minmax(68px, 110px) minmax(90px, 1fr) minmax(135px, auto);
+    gap: 10px;
+    align-items: center;
+    min-height: 22px;
+  }
+  .marker-gene {
+    color: var(--navy);
+    font-size: 12px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .marker-bar-track {
+    display: block;
+    height: 7px;
+    border-radius: 999px;
+    background: #edf1f7;
+    overflow: hidden;
+  }
+  .marker-bar {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+  }
+  .marker-bar-positive { background: var(--green); }
+  .marker-bar-negative { background: var(--red); }
+  .marker-stat {
+    color: var(--muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  @media (max-width: 720px) {
+    .marker-bar-row {
+      grid-template-columns: minmax(64px, 88px) minmax(70px, 1fr);
+      gap: 6px 8px;
+    }
+    .marker-stat {
+      grid-column: 2;
+      white-space: normal;
+    }
   }
 
   /* Reasoning blocks */
