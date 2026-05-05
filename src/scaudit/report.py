@@ -19,6 +19,18 @@ _BADGE_CLASS: dict[str, str] = {
 _NEEDS_ATTENTION = {"Ambiguous", "Unknown", "Needs review", "Artifact warning"}
 
 _PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
+_GITHUB_URL = "https://github.com/chaochungkuo/scaudit"
+_LOGO_MARK = """
+<svg class="logo-mark" viewBox="0 0 44 44" role="img" aria-label="scaudit logo">
+  <circle cx="19" cy="19" r="12" fill="#f8fbff" stroke="#18324a" stroke-width="4"/>
+  <path d="M28 28L37 37" stroke="#18324a" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="15" cy="17" r="2.2" fill="#6d5df6"/>
+  <circle cx="21" cy="13" r="2" fill="#2f80ed"/>
+  <circle cx="24" cy="20" r="2.4" fill="#12b5cb"/>
+  <circle cx="17" cy="24" r="2.6" fill="#2fb344"/>
+  <circle cx="25" cy="26" r="1.9" fill="#7c3aed"/>
+</svg>
+"""
 
 _DECISION_COLOR: dict[str, str] = {
     "Accepted": "#2a9d5c",
@@ -935,6 +947,7 @@ def _write_page(
     if back_link:
         href, label = back_link
         nav_html = f'<a href="{html.escape(href)}" class="nav-link">{html.escape(label)}</a>'
+    github_html = f'<a href="{html.escape(_GITHUB_URL)}" class="nav-link" target="_blank" rel="noopener noreferrer">GitHub</a>'
 
     path.write_text(
         f"""<!doctype html>
@@ -947,8 +960,14 @@ def _write_page(
 </head>
 <body>
   <header>
-    <span class="logo">scaudit</span>
-    {nav_html}
+    <a class="brand" href="{html.escape(_GITHUB_URL)}" target="_blank" rel="noopener noreferrer" aria-label="scaudit on GitHub">
+      {_LOGO_MARK}
+      <span class="logo">scaudit</span>
+    </a>
+    <nav class="nav-actions" aria-label="Report links">
+      {nav_html}
+      {github_html}
+    </nav>
   </header>
   <main>{body}</main>
   {"<script>" + extra_js + "</script>" if extra_js else ""}
@@ -991,16 +1010,38 @@ _CSS = """
   header {
     background: var(--card);
     border-bottom: 1px solid var(--border);
-    padding: 13px 32px;
+    padding: 10px 32px;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 16px;
     position: sticky;
     top: 0;
     z-index: 20;
     box-shadow: var(--shadow);
   }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    color: var(--navy);
+    text-decoration: none;
+    min-width: 0;
+  }
+  .brand:hover .logo { color: var(--blue); }
+  .logo-mark {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+  }
   .logo { font-weight: 800; font-size: 17px; letter-spacing: -0.3px; color: var(--navy); }
+  .nav-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
   .nav-link {
     font-size: 13px;
     font-weight: 600;
@@ -1013,6 +1054,12 @@ _CSS = """
     transition: background 0.1s;
   }
   .nav-link:hover { background: var(--bg); }
+  @media (max-width: 560px) {
+    header { padding: 10px 16px; }
+    .logo { font-size: 16px; }
+    .logo-mark { width: 30px; height: 30px; }
+    .nav-link { padding: 5px 10px; }
+  }
 
   /* ── Layout ── */
   main { max-width: 920px; margin: 0 auto; padding: 28px 24px 72px; }
