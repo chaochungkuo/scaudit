@@ -4,6 +4,7 @@ import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,128 @@ class ReferenceManifest:
     gene_id_type: str
     downloaded_at: str | None = None
     checksum: str | None = None
+
+
+PUBLIC_REFERENCES: list[dict[str, Any]] = [
+    {
+        "id": "tabula_sapiens_pbmc",
+        "species": "human",
+        "tissue": "blood",
+        "source": "Tabula Sapiens",
+        "version": "2022",
+        "cells": 94571,
+        "status": "remote",
+        "technology": "10x",
+        "condition": "healthy",
+        "label_key": "cell_type",
+        "gene_id_type": "symbol",
+        "notes": "Human immune/blood reference candidate.",
+    },
+    {
+        "id": "hca_bone_marrow_immune",
+        "species": "human",
+        "tissue": "bone marrow",
+        "source": "Human Cell Atlas",
+        "version": "metadata",
+        "cells": 378000,
+        "status": "remote",
+        "technology": "10x",
+        "condition": "healthy",
+        "label_key": "cell_type",
+        "gene_id_type": "symbol",
+        "notes": "Large human hematopoietic reference candidate.",
+    },
+    {
+        "id": "celltypist_immune_reference",
+        "species": "human",
+        "tissue": "blood",
+        "source": "CellTypist",
+        "version": "metadata",
+        "cells": 0,
+        "status": "model_reference",
+        "technology": "mixed",
+        "condition": "mixed",
+        "label_key": "majority_voting",
+        "gene_id_type": "symbol",
+        "notes": "Metadata entry for immune model evidence, not an h5ad reference download.",
+    },
+    {
+        "id": "tabula_muris_heart",
+        "species": "mouse",
+        "tissue": "heart",
+        "source": "Tabula Muris",
+        "version": "2018",
+        "cells": 3654,
+        "status": "remote",
+        "technology": "10x",
+        "condition": "healthy",
+        "label_key": "cell_type",
+        "gene_id_type": "symbol",
+        "notes": "Mouse heart public atlas candidate.",
+    },
+    {
+        "id": "tabula_muris_lung",
+        "species": "mouse",
+        "tissue": "lung",
+        "source": "Tabula Muris",
+        "version": "2018",
+        "cells": 5446,
+        "status": "remote",
+        "technology": "10x",
+        "condition": "healthy",
+        "label_key": "cell_type",
+        "gene_id_type": "symbol",
+        "notes": "Mouse lung public atlas candidate.",
+    },
+]
+
+
+def search_public_references(species: str = "", tissue: str = "") -> list[dict[str, Any]]:
+    species_norm = species.strip().lower()
+    tissue_norm = tissue.strip().lower()
+    results = []
+    for item in PUBLIC_REFERENCES:
+        if species_norm and str(item.get("species", "")).lower() != species_norm:
+            continue
+        if tissue_norm and tissue_norm not in str(item.get("tissue", "")).lower():
+            continue
+        results.append(dict(item))
+    return results
+
+
+def recommend_public_references(config: dict[str, Any], limit: int = 3) -> list[dict[str, Any]]:
+    dataset = config.get("dataset", {}) if isinstance(config, dict) else {}
+    species = str(dataset.get("species") or "").strip().lower()
+    tissue = str(dataset.get("tissue") or "").strip().lower()
+    condition = str(dataset.get("condition") or dataset.get("condition_key") or "").strip().lower()
+
+    recommendations = []
+    for item in PUBLIC_REFERENCES:
+        score = 0.0
+        reasons: list[str] = []
+        warnings: list[str] = []
+        if species and str(item.get("species", "")).lower() == species:
+            score += 0.45
+            reasons.append("species match")
+        elif species:
+            warnings.append("species mismatch")
+        if tissue and tissue in str(item.get("tissue", "")).lower():
+            score += 0.35
+            reasons.append("tissue match")
+        elif tissue:
+            warnings.append("tissue mismatch")
+        if item.get("cells"):
+            score += 0.10
+            reasons.append("cell count metadata available")
+        if str(item.get("label_key") or ""):
+            score += 0.10
+            reasons.append("label metadata available")
+        if condition and str(item.get("condition", "")).lower() not in {"", "mixed", condition}:
+            warnings.append(f"reference condition is {item.get('condition')}, query condition is {condition}")
+        recommendations.append({**item, "score": round(score, 2), "reasons": reasons, "warnings": warnings})
+
+    recommendations.sort(key=lambda item: (-float(item["score"]), str(item["id"])))
+    return recommendations[:limit]
 
 
 def registry_root(root: Path | None = None) -> Path:

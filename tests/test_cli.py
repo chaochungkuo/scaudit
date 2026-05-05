@@ -543,6 +543,35 @@ class CliTests(unittest.TestCase):
             self.assertIn('selected = ["my_ref"]', config_path.read_text(encoding="utf-8"))
             self.assertIn("my_ref", output.getvalue())
 
+    def test_reference_search_lists_public_candidates(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            main(["reference", "search", "--species", "mouse", "--tissue", "heart"])
+
+        text = output.getvalue()
+        self.assertIn("Public reference candidates", text)
+        self.assertIn("tabula_muris_heart", text)
+        self.assertIn("Tabula Muris", text)
+
+    def test_reference_recommend_can_write_config_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            config_path = temp_path / "config.toml"
+            with redirect_stdout(io.StringIO()):
+                main(["init-config", "input.h5ad", "--out", str(config_path)])
+            text = config_path.read_text(encoding="utf-8")
+            text = text.replace('species = ""', 'species = "mouse"')
+            text = text.replace('tissue = ""', 'tissue = "heart"')
+            config_path.write_text(text, encoding="utf-8")
+
+            output = io.StringIO()
+            with redirect_stdout(output):
+                main(["reference", "recommend", "--config", str(config_path), "--write"])
+
+            self.assertIn("Recommended references", output.getvalue())
+            self.assertIn("tabula_muris_heart", output.getvalue())
+            self.assertIn('selected = ["tabula_muris_heart"]', config_path.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

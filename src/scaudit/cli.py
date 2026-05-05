@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Sequence
 
 from scaudit import __version__
-from scaudit.config import build_plan, has_errors, validate_config, write_default_config
+from scaudit.config import build_plan, has_errors, load_config, validate_config, write_default_config
 from scaudit.data import diagnose_dataset
-from scaudit.references import add_reference, load_registry, use_reference
+from scaudit.references import add_reference, load_registry, recommend_public_references, search_public_references, use_reference
 from scaudit.rendering import print_bullets, print_status_table
 from scaudit.review import import_review_table
 from scaudit.run import annotate_direct, finalize_run, prepare_run
@@ -446,6 +446,12 @@ def reference(args: Sequence[str]) -> None:
         use_reference(config_path, reference_id)
         print(f"Updated {config_path}: selected {reference_id}")
         return
+    if subcommand == "search":
+        _reference_search(args[1:])
+        return
+    if subcommand == "recommend":
+        _reference_recommend(args[1:])
+        return
     if subcommand == "add":
         _reference_add(args[1:])
         return
@@ -509,6 +515,81 @@ def _reference_add(args: Sequence[str]) -> None:
     print(f"Path: {manifest.path}")
 
 
+def _reference_search(args: Sequence[str]) -> None:
+    species = ""
+    tissue = ""
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--species" and index + 1 < len(args):
+            species = args[index + 1]
+            index += 2
+        elif token == "--tissue" and index + 1 < len(args):
+            tissue = args[index + 1]
+            index += 2
+        else:
+            print(f"Unknown option for reference search: {token}", file=sys.stderr)
+            raise SystemExit(2)
+
+    rows = search_public_references(species=species, tissue=tissue)
+    if not rows:
+        print("No public reference candidates found.")
+        return
+    print_status_table(
+        "Public reference candidates",
+        [
+            (
+                str(row["id"]),
+                str(row.get("status", "remote")),
+                f"{row.get('species')} {row.get('tissue')} · {row.get('source')} {row.get('version')} · {row.get('cells')} cells",
+            )
+            for row in rows
+        ],
+    )
+
+
+def _reference_recommend(args: Sequence[str]) -> None:
+    config_path = Path("config.toml")
+    limit = 3
+    write = False
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--config" and index + 1 < len(args):
+            config_path = Path(args[index + 1])
+            index += 2
+        elif token == "--limit" and index + 1 < len(args):
+            limit = int(args[index + 1])
+            index += 2
+        elif token == "--write":
+            write = True
+            index += 1
+        else:
+            print(f"Unknown option for reference recommend: {token}", file=sys.stderr)
+            raise SystemExit(2)
+
+    config = load_config(config_path)
+    rows = recommend_public_references(config, limit=limit)
+    if not rows:
+        print("No public reference recommendations found.")
+        return
+    print_status_table(
+        "Recommended references",
+        [
+            (
+                str(row["id"]),
+                f"score {row['score']:.2f}",
+                "; ".join(row.get("reasons") or ["metadata candidate"]) + (f" · warnings: {'; '.join(row['warnings'])}" if row.get("warnings") else ""),
+            )
+            for row in rows
+        ],
+    )
+    if write:
+        use_reference(config_path, str(rows[0]["id"]))
+        print()
+        print(f"Updated {config_path}: selected {rows[0]['id']}")
+
+
 def _print_help() -> None:
     print("scaudit")
     print()
@@ -523,6 +604,8 @@ def _print_help() -> None:
     print("  scaudit plan config.toml")
     print("  scaudit run config.toml")
     print("  scaudit review import results/review_table.csv --run results/")
+    print("  scaudit reference search --species mouse --tissue heart")
+    print("  scaudit reference recommend --config config.toml [--write]")
     print("  scaudit reference add my_ref.h5ad --id my_ref --species mouse --tissue heart --label-key cell_type")
     print("  scaudit reference list")
     print("  scaudit reference use my_ref --config config.toml")
