@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from scaudit.config import load_config, validate_config
 from scaudit.cli import collect_capabilities, main
 from scaudit.data import infer_gene_id_counts, infer_gene_id_type, summarize_cluster_key
+from scaudit.markers import attach_marker_evidence, marker_rows_from_rank_genes_groups
 from scaudit.run import build_annotation_cards
 
 
@@ -127,6 +128,7 @@ class CliTests(unittest.TestCase):
 
             output_dir = temp_path / "results"
             self.assertTrue((output_dir / "config.resolved.toml").exists())
+            self.assertTrue((output_dir / "marker_evidence.csv").exists())
             self.assertTrue((output_dir / "annotation_cards.json").exists())
             self.assertTrue((output_dir / "review_table.csv").exists())
             self.assertTrue((output_dir / "report" / "report.html").exists())
@@ -137,6 +139,43 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(cards), 2)
         self.assertEqual(cards[0]["decision"], "Needs review")
         self.assertEqual(cards[0]["provenance"]["cell_count"], 10)
+
+    def test_marker_rows_from_rank_genes_groups(self) -> None:
+        rows = marker_rows_from_rank_genes_groups(
+            {
+                "names": {"0": ["Lyz2", "C1qa"], "1": ["Acta2"]},
+                "scores": {"0": [8.5, 7.2], "1": [6.0]},
+                "logfoldchanges": {"0": [1.4, 1.1], "1": [2.0]},
+                "pvals": {"0": [0.01, 0.02], "1": [0.03]},
+                "pvals_adj": {"0": [0.05, 0.06], "1": [0.07]},
+            },
+            top_n=2,
+        )
+
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0]["cluster_id"], "0")
+        self.assertEqual(rows[0]["gene"], "Lyz2")
+        self.assertEqual(rows[0]["rank"], 1)
+
+    def test_attach_marker_evidence_updates_cards(self) -> None:
+        cards = build_annotation_cards({"cluster_sizes": {"0": 10}})
+        updated = attach_marker_evidence(
+            cards,
+            [
+                {
+                    "cluster_id": "0",
+                    "rank": 1,
+                    "gene": "Lyz2",
+                    "score": 8.5,
+                    "logfoldchange": 1.4,
+                    "pvalue": 0.01,
+                    "pvalue_adj": 0.05,
+                }
+            ],
+        )
+
+        self.assertEqual(updated[0]["evidence"]["markers"][0]["gene"], "Lyz2")
+        self.assertIn("Marker evidence", updated[0]["reasoning"]["summary"])
 
     def test_finalize_command_writes_final_skeleton(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

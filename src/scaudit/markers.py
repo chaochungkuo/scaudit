@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import csv
+import importlib.util
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
 # Curated marker gene sets for common cell types.
 # Format: {cell_type: [gene, ...]}  — symbols, human unless noted.
 # Used as a lightweight label-proposal fallback when CellTypist is unavailable.
@@ -101,3 +107,121 @@ def lookup_cell_type(
             )
     results.sort(key=lambda x: x["jaccard"], reverse=True)
     return results[:top_n]
+
+
+@dataclass(frozen=True)
+class MarkerEvidenceResult:
+    rows: list[dict[str, Any]]
+    warnings: list[str]
+    method: str
+
+
+def compute_marker_evidence(dataset_path: Path, cluster_key: str, top_n: int = 10) -> MarkerEvidenceResult:
+    if not dataset_path.exists():
+        return MarkerEvidenceResult([], [f"Dataset file not found: {dataset_path}"], "scanpy.rank_genes_groups")
+    if not cluster_key:
+        return MarkerEvidenceResult([], ["cluster_key is required for marker evidence."], "scanpy.rank_genes_groups")
+    if importlib.util.find_spec("scanpy") is None:
+        return MarkerEvidenceResult([], ["scanpy is not installed; marker evidence was skipped."], "scanpy.rank_genes_groups")
+
+    try:
+        import scanpy as sc
+
+        adata = sc.read_h5ad(dataset_path)
+        if cluster_key not in adata.obs:
+            return MarkerEvidenceResult(
+                [],
+                [f"cluster_key '{cluster_key}' was not found in .obs; marker evidence was skipped."],
+                "scanpy.rank_genes_groups",
+            )
+
+        sc.tl.rank_genes_groups(adata, groupby=cluster_key, method="wilcoxon", n_genes=top_n)
+        rows = marker_rows_from_rank_genes_groups(adata.uns["rank_genes_groups"], top_n=top_n)
+        return MarkerEvidenceResult(rows, [], "scanpy.rank_genes_groups.wilcoxon")
+    except Exception as exc:  # pragma: no cover - depends on optional scanpy/h5ad internals
+        return MarkerEvidenceResult([], [f"Marker evidence failed: {exc}"], "scanpy.rank_genes_groups")
+
+
+def marker_rows_from_rank_genes_groups(rank_result: Any, top_n: int = 10) -> list[dict[str, Any]]:
+    names = rank_result.get("names")
+    if names is None:
+        return []
+
+    groups = _rank_groups(names)
+    rows: list[dict[str, Any]] = []
+    for group in groups:
+        for rank_index in range(min(top_n, len(names[group]))):
+            row = {
+                "cluster_id": str(group),
+                "rank": rank_index + 1,
+                "gene": _string_value(names[group][rank_index]),
+                "score": _optional_float(rank_result.get("scores"), group, rank_index),
+                "logfoldchange": _optional_float(rank_result.get("logfoldchanges"), group, rank_index),
+                "pvalue": _optional_float(rank_result.get("pvals"), group, rank_index),
+                "pvalue_adj": _optional_float(rank_result.get("pvals_adj"), group, rank_index),
+            }
+            rows.append(row)
+    return rows
+
+
+def attach_marker_evidence(annotation_cards: list[dict[str, Any]], marker_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows_by_cluster: dict[str, list[dict[str, Any]]] = {}
+    for row in marker_rows:
+        rows_by_cluster.setdefault(str(row["cluster_id"]), []).append(row)
+
+    for card in annotation_cards:
+        cluster_id = str(card.get("cluster_id", ""))
+        evidence_rows = rows_by_cluster.get(cluster_id, [])
+        markers = [
+            {
+                "gene": row["gene"],
+                "rank": row["rank"],
+                "score": row["score"],
+                "logfoldchange": row["logfoldchange"],
+                "pvalue_adj": row["pvalue_adj"],
+            }
+            for row in evidence_rows
+        ]
+        card.setdefault("evidence", {}).setdefault("markers", [])
+        card["evidence"]["markers"] = markers
+        if markers:
+            card.setdefault("reasoning", {})["summary"] = "Marker evidence has been computed; decision assignment is pending."
+            uncertainties = card.setdefault("reasoning", {}).setdefault("uncertainties", [])
+            card["reasoning"]["uncertainties"] = [
+                item for item in uncertainties if item != "No marker, model, or reference evidence has been computed yet."
+            ]
+    return annotation_cards
+
+
+def write_marker_evidence_csv(path: Path, marker_rows: list[dict[str, Any]]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["cluster_id", "rank", "gene", "score", "logfoldchange", "pvalue", "pvalue_adj"],
+        )
+        writer.writeheader()
+        writer.writerows(marker_rows)
+
+
+def _rank_groups(names: Any) -> list[str]:
+    dtype_names = getattr(getattr(names, "dtype", None), "names", None)
+    if dtype_names:
+        return list(map(str, dtype_names))
+    if isinstance(names, dict):
+        return list(map(str, names.keys()))
+    return []
+
+
+def _optional_float(values: Any, group: str, rank_index: int) -> float | None:
+    if values is None:
+        return None
+    try:
+        return float(values[group][rank_index])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
+def _string_value(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)

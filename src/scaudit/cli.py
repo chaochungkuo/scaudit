@@ -313,6 +313,7 @@ def run(args: Sequence[str]) -> None:
     print()
     print("Outputs:")
     print(f"  Report: {outputs.report_index}")
+    print(f"  Marker evidence: {outputs.marker_evidence}")
     print(f"  Annotation cards: {outputs.annotation_cards}")
     print(f"  Review table: {outputs.review_table}")
     print(f"  Reproducibility: {outputs.reproducibility}")

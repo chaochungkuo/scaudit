@@ -12,6 +12,7 @@ from typing import Any
 from scaudit import __version__
 from scaudit.config import load_config, write_default_config
 from scaudit.data import ClusterEvidence, compute_cluster_evidence, diagnose_dataset
+from scaudit.markers import write_marker_evidence_csv
 from scaudit.references import load_registry, registry_path
 from scaudit.report import render_draft_report, render_final_report
 
@@ -21,6 +22,7 @@ class RunOutputs:
     output_dir: Path
     resolved_config: Path
     diagnosis: Path
+    marker_evidence: Path
     annotation_cards: Path
     annotation_summary: Path
     review_table: Path
@@ -86,6 +88,7 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
         output_dir=output_dir,
         resolved_config=output_dir / "config.resolved.toml",
         diagnosis=output_dir / "diagnosis.json",
+        marker_evidence=output_dir / "marker_evidence.csv",
         annotation_cards=output_dir / "annotation_cards.json",
         annotation_summary=output_dir / "annotation_summary.csv",
         review_table=output_dir / "review_table.csv",
@@ -119,6 +122,7 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
             pass
 
     _write_json(outputs.diagnosis, diagnosis_payload)
+    write_marker_evidence_csv(outputs.marker_evidence, _marker_rows_from_evidence(evidence))
     _write_json(outputs.annotation_cards, annotation_cards)
     _write_annotation_summary(outputs.annotation_summary, annotation_cards)
     _write_review_table(outputs.review_table, annotation_cards)
@@ -185,12 +189,33 @@ def _reproducibility_payload(config: dict[str, Any]) -> dict[str, Any]:
         "parameters": config,
         "references": [],
         "models": [],
+        "evidence_methods": {
+            "markers": "scanpy.rank_genes_groups.wilcoxon",
+        },
         "environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),
         },
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _marker_rows_from_evidence(evidence: dict[str, ClusterEvidence]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for cluster_id, cluster_evidence in sorted(evidence.items(), key=lambda item: str(item[0])):
+        for rank, marker in enumerate(cluster_evidence.markers, start=1):
+            rows.append(
+                {
+                    "cluster_id": str(cluster_id),
+                    "rank": rank,
+                    "gene": marker.gene,
+                    "score": marker.score,
+                    "logfoldchange": marker.log2fc,
+                    "pvalue": None,
+                    "pvalue_adj": marker.pval_adj,
+                }
+            )
+    return rows
 
 
 def build_annotation_cards(
