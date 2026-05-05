@@ -92,6 +92,7 @@ def render_final_report(report_dir: Path) -> Path:
           <ul>
             <li><code>final_annotation_cards.json</code></li>
             <li><code>final_annotation_summary.csv</code></li>
+            <li><code>annotated.h5ad</code> when finalized with <code>--write-h5ad</code></li>
             <li><code>review_audit.json</code></li>
             <li><code>reproducibility.json</code></li>
           </ul>

@@ -38,6 +38,7 @@ class FinalOutputs:
     review_audit: Path
     reproducibility: Path
     report_index: Path
+    annotated_h5ad: Path | None = None
 
 
 def annotate_direct(
@@ -139,7 +140,7 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
     return outputs
 
 
-def finalize_run(run_dir: Path, output_dir: Path) -> FinalOutputs:
+def finalize_run(run_dir: Path, output_dir: Path, *, write_h5ad: bool = False) -> FinalOutputs:
     if not run_dir.exists():
         raise FileNotFoundError(f"run directory not found: {run_dir}")
 
@@ -154,14 +155,14 @@ def finalize_run(run_dir: Path, output_dir: Path) -> FinalOutputs:
         review_audit=output_dir / "review_audit.json",
         reproducibility=output_dir / "reproducibility.json",
         report_index=report_dir / "report.html",
+        annotated_h5ad=(output_dir / "annotated.h5ad") if write_h5ad else None,
     )
 
-    _copy_or_default(run_dir / "annotation_cards.json", outputs.annotation_cards, "[]\n")
-    _copy_or_default(
-        run_dir / "annotation_summary.csv",
-        outputs.annotation_summary,
-        "cluster_id,proposed_label,decision,confidence,review_priority\n",
-    )
+    cards = _read_json(run_dir / "annotation_cards.json", [])
+    review_rows = _read_review_rows(run_dir / "reviewed_review_table.csv")
+    final_cards = _finalize_annotation_cards(cards, review_rows)
+    _write_json(outputs.annotation_cards, final_cards)
+    _write_annotation_summary(outputs.annotation_summary, final_cards)
     _copy_or_default(run_dir / "reproducibility.json", outputs.reproducibility, "{}\n")
     _copy_or_default(
         run_dir / "review_audit.json",
@@ -177,6 +178,9 @@ def finalize_run(run_dir: Path, output_dir: Path) -> FinalOutputs:
         )
         + "\n",
     )
+    if write_h5ad and outputs.annotated_h5ad is not None:
+        reproducibility = _read_json(outputs.reproducibility, {})
+        _write_annotated_h5ad(outputs.annotated_h5ad, final_cards, reproducibility)
     render_final_report(report_dir)
     return outputs
 
@@ -186,6 +190,94 @@ def _copy_or_default(source: Path, destination: Path, default_text: str) -> None
         shutil.copyfile(source, destination)
     else:
         destination.write_text(default_text, encoding="utf-8")
+
+
+def _read_review_rows(path: Path) -> dict[str, dict[str, str]]:
+    if not path.exists():
+        return {}
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        return {str(row.get("cluster_id", "")).strip(): dict(row) for row in reader if str(row.get("cluster_id", "")).strip()}
+
+
+def _finalize_annotation_cards(cards: list[dict[str, Any]], review_rows: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
+    final_cards: list[dict[str, Any]] = []
+    for card in cards:
+        updated = json.loads(json.dumps(card))
+        cluster_id = str(updated.get("cluster_id", ""))
+        row = review_rows.get(cluster_id, {})
+        review_status = str(row.get("review_status") or "not_reviewed").strip() or "not_reviewed"
+        reviewed_label = str(row.get("reviewed_label") or "").strip()
+        reviewer_note = str(row.get("reviewer_note") or "").strip()
+        draft_label = str(updated.get("proposed_label") or "").strip()
+        draft_decision = str(updated.get("decision") or "Needs review")
+        confidence = updated.get("confidence", {})
+        final_label = reviewed_label if review_status in {"accepted", "changed"} and reviewed_label else draft_label
+        label_source = "reviewed" if review_status in {"accepted", "changed"} and reviewed_label else "draft"
+        final_decision = "Accepted" if final_label and review_status in {"accepted", "changed"} else draft_decision
+        if review_status == "rejected":
+            final_decision = "Needs review"
+            label_source = "reviewed"
+
+        updated["final_label"] = final_label
+        updated["final_decision"] = final_decision
+        updated["review"] = {
+            "status": review_status,
+            "reviewed_label": reviewed_label,
+            "reviewer_note": reviewer_note,
+            "label_source": label_source,
+        }
+        updated["provenance"] = updated.get("provenance", {})
+        updated["provenance"]["finalized"] = True
+        updated["provenance"]["label_source"] = label_source
+        if isinstance(confidence, dict):
+            updated["final_confidence"] = str(confidence.get("overall") or "")
+        final_cards.append(updated)
+    return final_cards
+
+
+def _write_annotated_h5ad(path: Path, cards: list[dict[str, Any]], reproducibility: dict[str, Any]) -> None:
+    if not cards:
+        raise ValueError("cannot write annotated h5ad without annotation cards")
+    try:
+        import anndata as ad
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError("anndata is required for --write-h5ad") from exc
+
+    input_path = Path(str(reproducibility.get("input_file") or ""))
+    parameters = reproducibility.get("parameters", {})
+    dataset = parameters.get("dataset", {}) if isinstance(parameters, dict) else {}
+    cluster_key = str(dataset.get("cluster_key") or "")
+    if not input_path.exists():
+        raise FileNotFoundError(f"input h5ad not found for finalize: {input_path}")
+    if not cluster_key:
+        raise ValueError("dataset.cluster_key is required to write annotated h5ad")
+
+    adata = ad.read_h5ad(input_path)
+    if cluster_key not in adata.obs:
+        raise ValueError(f"cluster_key '{cluster_key}' was not found in input h5ad")
+
+    by_cluster = {str(card.get("cluster_id", "")): card for card in cards}
+    clusters = adata.obs[cluster_key].astype(str)
+    adata.obs["scaudit_label"] = [str(by_cluster.get(value, {}).get("final_label") or "") for value in clusters]
+    adata.obs["scaudit_decision"] = [str(by_cluster.get(value, {}).get("final_decision") or by_cluster.get(value, {}).get("decision") or "") for value in clusters]
+    adata.obs["scaudit_confidence"] = [
+        str(by_cluster.get(value, {}).get("final_confidence") or by_cluster.get(value, {}).get("confidence", {}).get("overall") or "")
+        for value in clusters
+    ]
+    adata.obs["scaudit_review_status"] = [
+        str(by_cluster.get(value, {}).get("review", {}).get("status") or "not_reviewed") for value in clusters
+    ]
+    adata.obs["scaudit_label_source"] = [
+        str(by_cluster.get(value, {}).get("review", {}).get("label_source") or "draft") for value in clusters
+    ]
+    adata.uns["scaudit"] = {
+        "scaudit_version": __version__,
+        "reproducibility_json": json.dumps(reproducibility, sort_keys=True),
+        "final_annotation_cards_json": json.dumps(cards, sort_keys=True),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    adata.write_h5ad(path)
 
 
 def _reproducibility_payload(config: dict[str, Any]) -> dict[str, Any]:
@@ -495,8 +587,9 @@ def _marker_strength(marker: Any) -> str:
 def _write_annotation_summary(path: Path, annotation_cards: list[dict[str, Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["cluster_id", "proposed_label", "decision", "confidence", "review_priority"])
+        writer.writerow(["cluster_id", "proposed_label", "decision", "confidence", "review_priority", "final_label", "final_decision", "label_source"])
         for card in annotation_cards:
+            review = card.get("review", {})
             writer.writerow(
                 [
                     card["cluster_id"],
@@ -504,6 +597,9 @@ def _write_annotation_summary(path: Path, annotation_cards: list[dict[str, Any]]
                     card["decision"],
                     card["confidence"]["overall"],
                     "review",
+                    card.get("final_label") or card.get("proposed_label") or "",
+                    card.get("final_decision") or card.get("decision") or "",
+                    review.get("label_source") or "draft",
                 ]
             )
 
@@ -538,3 +634,9 @@ def _write_review_table(path: Path, annotation_cards: list[dict[str, Any]]) -> N
 
 def _write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _read_json(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    return json.loads(path.read_text(encoding="utf-8"))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import importlib.util
 import json
 import os
 import sys
@@ -263,6 +264,63 @@ class CliTests(unittest.TestCase):
 
             self.assertTrue((temp_path / "results" / "reviewed_review_table.csv").exists())
             self.assertTrue((temp_path / "results" / "review_audit.json").exists())
+
+    @unittest.skipIf(importlib.util.find_spec("anndata") is None, "anndata is required for h5ad output test")
+    def test_finalize_can_write_annotated_h5ad(self) -> None:
+        import anndata as ad
+        import numpy as np
+        import pandas as pd
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            input_path = temp_path / "input.h5ad"
+            adata = ad.AnnData(
+                X=np.array(
+                    [
+                        [2.0, 0.0, 1.0],
+                        [2.2, 0.1, 0.9],
+                        [0.0, 3.0, 1.0],
+                        [0.1, 2.8, 1.1],
+                    ]
+                ),
+                obs=pd.DataFrame({"leiden": ["0", "0", "1", "1"]}, index=[f"cell{i}" for i in range(4)]),
+                var=pd.DataFrame(index=["CD3D", "MS4A1", "ACTB"]),
+            )
+            adata.write_h5ad(input_path)
+
+            config_path = temp_path / "config.toml"
+            with redirect_stdout(io.StringIO()):
+                main(["init-config", str(input_path), "--out", str(config_path)])
+            text = config_path.read_text(encoding="utf-8")
+            text = text.replace('cluster_key = ""', 'cluster_key = "leiden"')
+            text = text.replace('dir = "results"', f'dir = "{temp_path / "results"}"')
+            config_path.write_text(text, encoding="utf-8")
+
+            with redirect_stdout(io.StringIO()):
+                main(["run", str(config_path)])
+
+            review_table = temp_path / "results" / "review_table.csv"
+            with review_table.open("a", encoding="utf-8") as handle:
+                handle.write("0,T cell,Needs review,medium,changed,Reviewed T cell,manual correction\n")
+
+            with redirect_stdout(io.StringIO()):
+                main(["review", "import", str(review_table), "--run", str(temp_path / "results")])
+
+            final_dir = temp_path / "final"
+            with redirect_stdout(io.StringIO()):
+                main(["finalize", str(temp_path / "results"), "--out", str(final_dir), "--write-h5ad"])
+
+            annotated_path = final_dir / "annotated.h5ad"
+            self.assertTrue(annotated_path.exists())
+            annotated = ad.read_h5ad(annotated_path)
+            self.assertIn("scaudit_label", annotated.obs)
+            self.assertIn("scaudit_decision", annotated.obs)
+            self.assertIn("scaudit_confidence", annotated.obs)
+            self.assertIn("scaudit_review_status", annotated.obs)
+            self.assertIn("scaudit_label_source", annotated.obs)
+            self.assertEqual(annotated.obs.loc["cell0", "scaudit_label"], "Reviewed T cell")
+            self.assertEqual(annotated.obs.loc["cell0", "scaudit_label_source"], "reviewed")
+            self.assertIn("scaudit", annotated.uns)
 
     def test_annotate_command_writes_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

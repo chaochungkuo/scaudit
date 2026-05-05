@@ -338,6 +338,7 @@ def finalize(args: Sequence[str]) -> None:
         raise SystemExit(2)
     run_dir = Path(args[0])
     output_dir = Path("final")
+    write_h5ad = False
 
     index = 1
     while index < len(args):
@@ -345,23 +346,28 @@ def finalize(args: Sequence[str]) -> None:
         if token == "--out" and index + 1 < len(args):
             output_dir = Path(args[index + 1])
             index += 2
+        elif token == "--write-h5ad":
+            write_h5ad = True
+            index += 1
         else:
             print(f"Unknown option for finalize: {token}", file=sys.stderr)
             raise SystemExit(2)
 
     try:
-        outputs = finalize_run(run_dir, output_dir)
-    except FileNotFoundError as exc:
+        outputs = finalize_run(run_dir, output_dir, write_h5ad=write_h5ad)
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
-    print("Final annotation audit skeleton complete")
+    print("Final annotation audit complete")
     print()
     print("Outputs:")
     print(f"  Report: {outputs.report_index}")
     print(f"  Final annotation cards: {outputs.annotation_cards}")
     print(f"  Final summary: {outputs.annotation_summary}")
     print(f"  Review audit: {outputs.review_audit}")
+    if outputs.annotated_h5ad:
+        print(f"  Annotated h5ad: {outputs.annotated_h5ad}")
 
 
 def review(args: Sequence[str]) -> None:
@@ -520,13 +526,13 @@ def _print_help() -> None:
     print("  scaudit reference add my_ref.h5ad --id my_ref --species mouse --tissue heart --label-key cell_type")
     print("  scaudit reference list")
     print("  scaudit reference use my_ref --config config.toml")
-    print("  scaudit finalize results/ --out final/")
+    print("  scaudit finalize results/ --out final/ [--write-h5ad]")
     print()
     print("Commands:")
     print("  annotate     Full annotation audit from h5ad in one command")
     print("  diagnose     Inspect dataset structure and metadata")
     print("  doctor       Show environment capability checks")
-    print("  finalize     Freeze a draft run into final output skeleton")
+    print("  finalize     Freeze a draft run and optionally write annotated.h5ad")
     print("  init-config  Create a starter config.toml")
     print("  plan         Preview the run plan")
     print("  reference    Manage local reference registry")
