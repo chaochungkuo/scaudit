@@ -1,0 +1,32 @@
+<svg width="720" height="220" viewBox="0 0 720 220" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">scaudit logo</title>
+  <desc id="desc">A magnifying glass over single-cell dots next to the scaudit wordmark and evidence tagline.</desc>
+  <rect width="720" height="220" rx="28" fill="#FFFFFF"/>
+  <rect x="1.5" y="1.5" width="717" height="217" rx="26.5" stroke="#D8E2F0" stroke-width="3"/>
+
+  <g transform="translate(62 40)">
+    <circle cx="70" cy="70" r="55" fill="#F8FBFF" stroke="#18324A" stroke-width="10"/>
+    <path d="M112 112L150 150" stroke="#18324A" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="47" cy="60" r="7" fill="#6D5DF6"/>
+    <circle cx="68" cy="42" r="6" fill="#2F80ED"/>
+    <circle cx="86" cy="66" r="8" fill="#12B5CB"/>
+    <circle cx="58" cy="88" r="9" fill="#2FB344"/>
+    <circle cx="92" cy="95" r="6" fill="#7C3AED"/>
+    <circle cx="78" cy="78" r="5" fill="#15AABF"/>
+    <circle cx="38" cy="84" r="5" fill="#38BDF8"/>
+    <circle cx="101" cy="47" r="5" fill="#74C69D"/>
+  </g>
+
+  <g transform="translate(208 54)">
+    <rect x="0" y="0" width="72" height="96" rx="12" fill="#F8FBFF" stroke="#D8E2F0" stroke-width="4"/>
+    <path d="M18 30L27 39L48 18" stroke="#2FB344" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M18 58H54" stroke="#6D5DF6" stroke-width="6" stroke-linecap="round"/>
+    <path d="M18 76H47" stroke="#12B5CB" stroke-width="6" stroke-linecap="round"/>
+  </g>
+
+  <g transform="translate(315 54)">
+    <text x="0" y="58" fill="#18324A" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="64" font-weight="800" letter-spacing="0">scaudit</text>
+    <text x="4" y="92" fill="#53697F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="700" letter-spacing="3">SINGLE CELL AUDIT</text>
+    <text x="4" y="124" fill="#6D5DF6" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="700" letter-spacing="2">EVIDENCE / EXPLAINED / AUDITABLE</text>
+  </g>
+</svg>

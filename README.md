@@ -1,3 +1,14 @@
+<p align="center">
+  <img src="docs/assets/scaudit-logo.svg" alt="scaudit logo" width="560">
+</p>
+
+<p align="center">
+  <a href="https://github.com/chaochungkuo/scaudit"><img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white"></a>
+  <a href="https://github.com/chaochungkuo/scaudit/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-2FB344"></a>
+  <a href="https://github.com/chaochungkuo/scaudit"><img alt="Version: 0.1.0" src="https://img.shields.io/badge/version-0.1.0-6D5DF6"></a>
+  <a href="https://github.com/chaochungkuo/scaudit"><img alt="Status: early MVP" src="https://img.shields.io/badge/status-early%20MVP-12B5CB"></a>
+</p>
+
 # scaudit
 
 Transparent annotation audit framework for single-cell RNA-seq.
