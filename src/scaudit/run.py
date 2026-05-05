@@ -72,6 +72,8 @@ def annotate_direct(
         text = text.replace('species = ""', f'species = "{species}"')
     if tissue:
         text = text.replace('tissue = ""', f'tissue = "{tissue}"')
+    if llm:
+        text = text.replace("enabled = false", "enabled = true", 1)
     tmp_path.write_text(text, encoding="utf-8")
 
     try:
@@ -118,10 +120,12 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
 
     annotation_cards = build_annotation_cards(diagnosis_payload, evidence)
 
-    if llm:
+    llm_config = config.get("llm", {})
+    llm_enabled = isinstance(llm_config, dict) and llm_config.get("enabled") is True
+    if llm and llm_enabled:
         try:
             from scaudit.llm import enrich_cards_with_llm
-            enrich_cards_with_llm(annotation_cards)
+            enrich_cards_with_llm(annotation_cards, **_llm_settings(config))
         except Exception:  # pragma: no cover
             pass
 
@@ -201,6 +205,19 @@ def _reproducibility_payload(config: dict[str, Any]) -> dict[str, Any]:
             "platform": platform.platform(),
         },
         "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _llm_settings(config: dict[str, Any]) -> dict[str, Any]:
+    llm_config = config.get("llm", {})
+    if not isinstance(llm_config, dict):
+        return {}
+    return {
+        "provider": str(llm_config.get("provider", "") or ""),
+        "base_url": str(llm_config.get("base_url", "") or ""),
+        "api_key_env": str(llm_config.get("api_key_env", "") or ""),
+        "model": str(llm_config.get("model", "") or ""),
+        "temperature": float(llm_config.get("temperature", 0) or 0),
     }
 
 

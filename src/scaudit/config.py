@@ -63,6 +63,8 @@ allow_ambiguous = true
 enabled = false
 provider = "openai"
 mode = "explain_only"
+base_url = ""
+api_key_env = "SCAUDIT_LLM_API_KEY"
 model = ""
 temperature = 0
 

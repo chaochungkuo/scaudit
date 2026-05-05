@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import urllib.request
 from typing import Any
 
 
@@ -45,31 +46,34 @@ Write a single-paragraph summary for the annotation card.
 def enrich_cards_with_llm(
     annotation_cards: list[dict[str, Any]],
     api_key: str | None = None,
-    model: str = "claude-haiku-4-5-20251001",
+    provider: str = "",
+    base_url: str = "",
+    api_key_env: str = "",
+    model: str = "",
+    temperature: float = 0,
 ) -> list[dict[str, Any]]:
-    """Replace reasoning.summary with a Claude-generated narrative for each card.
+    """Replace reasoning.summary with an LLM-generated narrative for each card.
 
-    Skips silently if the anthropic SDK is not installed or no API key is available.
+    Supports Anthropic and OpenAI-compatible chat completion endpoints.
+    Skips silently if the provider client cannot be configured.
     Cards with decision=="Accepted" and high confidence still get updated summaries.
 
     Returns the same list mutated in-place (also returned for chaining).
     """
-    if importlib.util.find_spec("anthropic") is None:
-        return annotation_cards
-
-    key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    resolved_provider = (provider or os.environ.get("SCAUDIT_LLM_PROVIDER", "") or "anthropic").lower()
+    resolved_model = model or os.environ.get("SCAUDIT_LLM_MODEL", "") or _default_model(resolved_provider)
+    key = api_key or _api_key_from_env(api_key_env, resolved_provider)
     if not key:
         return annotation_cards
 
     try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=key)
+        client = _build_client(resolved_provider, key, base_url)
     except Exception:  # pragma: no cover
         return annotation_cards
 
     for card in annotation_cards:
         try:
-            summary = _generate_summary(client, card, model)
+            summary = _generate_summary(client, card, resolved_model, temperature)
             if summary:
                 card.setdefault("reasoning", {})["summary"] = summary
         except Exception:  # pragma: no cover - API errors should never crash the pipeline
@@ -78,7 +82,89 @@ def enrich_cards_with_llm(
     return annotation_cards
 
 
-def _generate_summary(client: Any, card: dict[str, Any], model: str) -> str | None:
+def _default_model(provider: str) -> str:
+    if provider in {"openai", "openai-compatible"}:
+        return "gpt-4o-mini"
+    return "claude-haiku-4-5-20251001"
+
+
+def _api_key_from_env(api_key_env: str, provider: str) -> str:
+    candidates = []
+    if api_key_env:
+        candidates.append(api_key_env)
+    candidates.append("SCAUDIT_LLM_API_KEY")
+    if provider in {"openai", "openai-compatible"}:
+        candidates.append("OPENAI_API_KEY")
+    else:
+        candidates.append("ANTHROPIC_API_KEY")
+    for name in candidates:
+        value = os.environ.get(name, "")
+        if value:
+            return value
+    return ""
+
+
+def _build_client(provider: str, api_key: str, base_url: str) -> Any:
+    if provider in {"openai", "openai-compatible"}:
+        return OpenAICompatibleClient(
+            api_key=api_key,
+            base_url=base_url or os.environ.get("SCAUDIT_LLM_BASE_URL", "") or "https://api.openai.com/v1",
+        )
+    if importlib.util.find_spec("anthropic") is None:
+        raise RuntimeError("anthropic SDK is not installed")
+    import anthropic
+
+    return AnthropicClient(anthropic.Anthropic(api_key=api_key))
+
+
+class AnthropicClient:
+    def __init__(self, client: Any) -> None:
+        self.client = client
+
+    def complete(self, *, model: str, system: str, prompt: str, temperature: float) -> str:
+        message = self.client.messages.create(
+            model=model,
+            max_tokens=120,
+            temperature=temperature,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return message.content[0].text.strip() if message.content else ""
+
+
+class OpenAICompatibleClient:
+    def __init__(self, api_key: str, base_url: str) -> None:
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+
+    def complete(self, *, model: str, system: str, prompt: str, temperature: float) -> str:
+        payload = {
+            "model": model,
+            "temperature": temperature,
+            "max_tokens": 120,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        request = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=60) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        choices = data.get("choices") or []
+        if not choices:
+            return ""
+        return str(choices[0].get("message", {}).get("content", "")).strip()
+
+
+def _generate_summary(client: Any, card: dict[str, Any], model: str, temperature: float) -> str | None:
     cluster_id = str(card.get("cluster_id", ""))
     decision = str(card.get("decision", ""))
     confidence = card.get("confidence", {})
@@ -127,11 +213,10 @@ def _generate_summary(client: Any, card: dict[str, Any], model: str) -> str | No
         contradictions="; ".join(reasoning.get("contradictions") or []) or "none",
     )
 
-    message = client.messages.create(
+    text = client.complete(
         model=model,
-        max_tokens=120,
         system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
+        prompt=prompt,
+        temperature=temperature,
     )
-    text = message.content[0].text.strip() if message.content else ""
     return text or None

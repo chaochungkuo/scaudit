@@ -2,20 +2,23 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from scaudit.config import load_config, validate_config
 from scaudit.cli import collect_capabilities, main
 from scaudit.data import infer_gene_id_counts, infer_gene_id_type, summarize_cluster_key
+from scaudit.llm import OpenAICompatibleClient, enrich_cards_with_llm
 from scaudit.markers import attach_marker_evidence, marker_rows_from_rank_genes_groups
 from scaudit.report import render_draft_report
-from scaudit.run import build_annotation_cards
+from scaudit.run import _llm_settings, build_annotation_cards
 
 
 class CliTests(unittest.TestCase):
@@ -298,6 +301,60 @@ class CliTests(unittest.TestCase):
             self.assertIn('data-umap-mode="confidence"', html)
             self.assertIn('data-umap-mode="sample"', html)
             self.assertIn("window.scauditUMAPTraces", html)
+
+    def test_llm_settings_reads_config_values(self) -> None:
+        settings = _llm_settings(
+            {
+                "llm": {
+                    "provider": "openai",
+                    "base_url": "https://chat.kiconnect.nrw/api/v1",
+                    "api_key_env": "KICONNECT_API_KEY",
+                    "model": "test-model",
+                    "temperature": 0.2,
+                }
+            }
+        )
+
+        self.assertEqual(settings["provider"], "openai")
+        self.assertEqual(settings["base_url"], "https://chat.kiconnect.nrw/api/v1")
+        self.assertEqual(settings["api_key_env"], "KICONNECT_API_KEY")
+        self.assertEqual(settings["model"], "test-model")
+        self.assertEqual(settings["temperature"], 0.2)
+
+    def test_openai_compatible_llm_updates_summary(self) -> None:
+        class FakeClient(OpenAICompatibleClient):
+            def __init__(self) -> None:
+                self.kwargs = {}
+                pass
+
+            def complete(self, **kwargs):
+                self.kwargs = kwargs
+                return "Grounded summary."
+
+        cards = [
+            {
+                "cluster_id": "0",
+                "decision": "Needs review",
+                "confidence": {"lineage": "medium", "subtype": "unknown", "overall": "medium"},
+                "evidence": {"markers": [{"gene": "CD3D", "log2fc": 1.2}], "models": [], "references": []},
+                "reasoning": {"summary": "old", "supports": [], "uncertainties": [], "contradictions": []},
+                "provenance": {"cell_count": 10},
+            }
+        ]
+
+        client = FakeClient()
+        with patch.dict(os.environ, {"KICONNECT_API_KEY": "token"}), patch("scaudit.llm._build_client", return_value=client):
+            enrich_cards_with_llm(
+                cards,
+                provider="openai",
+                base_url="https://chat.kiconnect.nrw/api/v1",
+                api_key_env="KICONNECT_API_KEY",
+                model="model",
+                temperature=0,
+            )
+
+        self.assertEqual(cards[0]["reasoning"]["summary"], "Grounded summary.")
+        self.assertEqual(client.kwargs["model"], "model")
 
     def test_reference_add_and_use(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -115,6 +115,30 @@ scaudit diagnose input.h5ad --cluster-key leiden
 scaudit doctor
 ```
 
+## LLM configuration
+
+LLM summaries are optional and explain-only. For an OpenAI-compatible endpoint such as KI Connect, put the URL and model in `config.toml` and keep the token in an environment variable:
+
+```toml
+[llm]
+enabled = true
+provider = "openai"
+mode = "explain_only"
+base_url = "https://chat.kiconnect.nrw/api/v1"
+api_key_env = "KICONNECT_API_KEY"
+model = "your-model-name"
+temperature = 0
+```
+
+Then run:
+
+```bash
+export KICONNECT_API_KEY="..."
+scaudit run config.toml
+```
+
+For one-command runs, `scaudit annotate ...` enables LLM summaries by default when an API key is configured; pass `--no-llm` to skip them.
+
 ## Roadmap
 
 Near-term development is focused on completing a public-dataset end-to-end run:
