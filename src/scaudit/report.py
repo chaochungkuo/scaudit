@@ -1033,9 +1033,14 @@ def _evidence_layer(title: str, purpose: str, tool: str, rows: list[tuple[str, s
 
 def _marker_evidence_layer(markers: list[Any], references: list[Any]) -> str:
     rows: list[tuple[str, str]] = []
-    if markers:
-        names = ", ".join(str(m.get("gene") or m) if isinstance(m, dict) else str(m) for m in markers[:10])
-        rows.append(("Observed markers", names))
+    marker_dicts = _marker_dicts(markers)
+    if marker_dicts:
+        strong = [marker for marker in marker_dicts if _marker_strength_label(marker) == "strong"]
+        moderate = [marker for marker in marker_dicts if _marker_strength_label(marker) == "moderate"]
+        weak = [marker for marker in marker_dicts if _marker_strength_label(marker) == "weak"]
+        rows.append(("Marker rule", "Strong: log2FC > 1 and padj < 0.01; moderate: log2FC > 0.5 and padj < 0.05"))
+        rows.append(("Strength summary", f"{len(strong)} strong, {len(moderate)} moderate, {len(weak)} weak among top {len(marker_dicts)} markers"))
+        rows.append(("Top statistics", _format_marker_statistics(marker_dicts[:6])))
     builtin = [r for r in references if isinstance(r, dict) and r.get("ref_id") == "builtin"]
     if builtin:
         parts = []
@@ -1043,8 +1048,10 @@ def _marker_evidence_layer(markers: list[Any], references: list[Any]) -> str:
             lbl = str(r.get("label") or "")
             j = r.get("jaccard")
             j_str = f" ({j:.2f})" if isinstance(j, (int, float)) else ""
-            parts.append(f"{lbl}{j_str}")
-        rows.append(("Built-in marker DB", ", ".join(parts)))
+            shared = r.get("n_shared")
+            shared_str = f", {shared} shared genes" if isinstance(shared, (int, float)) else ""
+            parts.append(f"{lbl}{j_str}{shared_str}")
+        rows.append(("Marker-set overlap", ", ".join(parts)))
     return _evidence_layer(
         "Marker-based evidence",
         "Biological interpretability",
@@ -1052,6 +1059,43 @@ def _marker_evidence_layer(markers: list[Any], references: list[Any]) -> str:
         rows or [("Status", "No marker evidence available for this cluster.")],
         status="Active" if rows else "Missing",
     )
+
+
+def _format_marker_statistics(markers: list[dict[str, Any]]) -> str:
+    parts = []
+    for marker in markers:
+        gene = str(marker.get("gene") or "")
+        log2fc = _marker_log2fc(marker)
+        score = _optional_number(marker.get("score"))
+        pval = _optional_number(marker.get("pval_adj", marker.get("pvalue_adj")))
+        if not gene:
+            continue
+        fields = []
+        if log2fc is not None:
+            fields.append(f"log2FC {log2fc:+.2f}")
+        if pval is not None:
+            fields.append(f"padj {_format_pvalue(pval)}")
+        if score is not None:
+            fields.append(f"score {score:.2f}")
+        strength = _marker_strength_label(marker)
+        fields.append(strength)
+        parts.append(f"{gene} ({', '.join(fields)})")
+    return "; ".join(parts)
+
+
+def _marker_strength_label(marker: dict[str, Any]) -> str:
+    pval = _optional_number(marker.get("pval_adj", marker.get("pvalue_adj")))
+    log2fc = _marker_log2fc(marker)
+    score = _optional_number(marker.get("score"))
+    if pval is not None and pval >= 0.05:
+        return "weak"
+    if log2fc is None:
+        return "moderate" if score is not None and score > 0 else "weak"
+    if log2fc > 1.0 and (pval is None or pval < 0.01):
+        return "strong"
+    if log2fc > 0.5 and (pval is None or pval < 0.05):
+        return "moderate"
+    return "weak"
 
 
 def _reference_evidence_layer(references: list[Any]) -> str:

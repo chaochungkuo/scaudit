@@ -407,6 +407,7 @@ class CliTests(unittest.TestCase):
                                 ],
                                 "models": [],
                                 "references": [
+                                    {"ref_id": "builtin", "label": "T cell", "jaccard": 0.24, "n_shared": 4},
                                     {"ref_id": "pbmc_ref", "label": "CD4 T cell", "jaccard": 0.18, "n_shared": 6}
                                 ],
                                 "ontology": [],
@@ -459,6 +460,11 @@ class CliTests(unittest.TestCase):
             self.assertIn("Evidence stack", html)
             self.assertIn("Marker-based evidence", html)
             self.assertIn("Scanpy rank_genes_groups", html)
+            self.assertIn("Marker rule", html)
+            self.assertIn("1 strong, 1 moderate, 0 weak", html)
+            self.assertIn("CD3D (log2FC +1.70, padj 1.0e-04, score 8.20, strong)", html)
+            self.assertIn("Marker-set overlap", html)
+            self.assertIn("T cell (0.24), 4 shared genes", html)
             self.assertIn("Reference-based mapping", html)
             self.assertIn("Model-based prediction", html)
             self.assertIn("Ontology reasoning", html)
