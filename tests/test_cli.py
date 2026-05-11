@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from scaudit.config import load_config, validate_config
 from scaudit.cli import collect_capabilities, main
-from scaudit.data import ClusterEvidence, _fill_composition_evidence, _qc_metric_warning, _reference_gene_warnings, infer_gene_id_counts, infer_gene_id_type, summarize_cluster_key
+from scaudit.data import ClusterEvidence, MarkerGene, _fill_composition_evidence, _fill_marker_signature_evidence, _qc_metric_warning, _reference_gene_warnings, infer_gene_id_counts, infer_gene_id_type, summarize_cluster_key
 from scaudit.llm import OpenAICompatibleClient, enrich_cards_with_llm
 from scaudit.markers import attach_marker_evidence, marker_rows_from_rank_genes_groups
 from scaudit.report import render_draft_report
@@ -145,6 +145,27 @@ class CliTests(unittest.TestCase):
         self.assertEqual(evidence["0"].composition["sample"]["fraction"], 1.0)
         self.assertTrue(any("sample or batch effect" in warning for warning in evidence["0"].qc_warnings))
         self.assertFalse(evidence["1"].qc_warnings)
+
+    def test_marker_signature_evidence_scores_builtin_sets(self) -> None:
+        evidence = {
+            "0": ClusterEvidence(
+                "0",
+                markers=[
+                    MarkerGene("CD3D", 8.0, 1.6, 0.001),
+                    MarkerGene("CD3E", 7.0, 1.4, 0.001),
+                    MarkerGene("TRAC", 6.5, 1.2, 0.001),
+                ],
+            )
+        }
+
+        _fill_marker_signature_evidence(evidence)
+
+        self.assertTrue(evidence["0"].marker_signatures)
+        top = evidence["0"].marker_signatures[0]
+        self.assertEqual(top["source"], "builtin_marker_signature")
+        self.assertIn(top["label"], {"T cell", "CD4 T cell", "CD8 T cell"})
+        self.assertGreaterEqual(top["n_matched"], 1)
+        self.assertIn("matched_genes", top)
 
     def test_cluster_diagnostics_flags_tiny_and_missing_clusters(self) -> None:
         diagnosis = summarize_cluster_key({"0": 25, "1": 8}, missing_values=2)
@@ -405,6 +426,19 @@ class CliTests(unittest.TestCase):
                                     {"gene": "CD3D", "score": 8.2, "log2fc": 1.7, "pval_adj": 0.0001},
                                     {"gene": "NKG7", "score": 5.5, "log2fc": 0.8, "pval_adj": 0.02},
                                 ],
+                                "marker_signatures": [
+                                    {
+                                        "source": "builtin_marker_signature",
+                                        "tool": "scaudit.markers.MARKER_DB",
+                                        "label": "T cell",
+                                        "matched_genes": ["CD3D", "NKG7"],
+                                        "missing_genes": ["CD3E"],
+                                        "n_matched": 2,
+                                        "n_signature_genes": 6,
+                                        "coverage": 0.333,
+                                        "overlap_score": 0.25,
+                                    }
+                                ],
                                 "models": [],
                                 "references": [
                                     {"ref_id": "builtin", "label": "T cell", "jaccard": 0.24, "n_shared": 4},
@@ -460,9 +494,13 @@ class CliTests(unittest.TestCase):
             self.assertIn("Evidence stack", html)
             self.assertIn("Marker-based evidence", html)
             self.assertIn("Scanpy rank_genes_groups", html)
+            self.assertIn("built-in marker signature scoring", html)
+            self.assertIn("signature coverage/overlap", html)
             self.assertIn("Marker rule", html)
             self.assertIn("1 strong, 1 moderate, 0 weak", html)
             self.assertIn("CD3D (log2FC +1.70, padj 1.0e-04, score 8.20, strong)", html)
+            self.assertIn("Signature scoring", html)
+            self.assertIn("T cell (coverage 33%; overlap 0.25; matched: CD3D, NKG7)", html)
             self.assertIn("Marker-set overlap", html)
             self.assertIn("T cell (0.24), 4 shared genes", html)
             self.assertIn("Reference-based mapping", html)

@@ -375,8 +375,8 @@ def _evidence_stack_section(cards: list[dict[str, Any]]) -> str:
         {
             "layer": "Marker-based evidence",
             "purpose": "Biological interpretability",
-            "tools": "Scanpy rank_genes_groups; built-in marker DB",
-            "outputs": "DE markers, log2FC, padj, marker-set overlap",
+            "tools": "Scanpy rank_genes_groups; built-in marker DB; built-in marker signature scoring",
+            "outputs": "DE markers, log2FC, padj, signature coverage/overlap, marker-set overlap",
             "authority": "Can support labels and confidence",
             "available": any(card.get("evidence", {}).get("markers") for card in cards),
         },
@@ -903,6 +903,7 @@ def _cluster_card(card: dict[str, Any]) -> str:
     suggestions = reasoning.get("validation_suggestions") or []
     evidence = card.get("evidence", {})
     markers = evidence.get("markers") or []
+    marker_signatures = evidence.get("marker_signatures") or []
     models = evidence.get("models") or []
     references = evidence.get("references") or []
     qc_metrics = evidence.get("qc") or {}
@@ -937,6 +938,7 @@ def _cluster_card(card: dict[str, Any]) -> str:
 
     evidence_stack = _cluster_evidence_stack(
         markers=markers,
+        marker_signatures=marker_signatures,
         models=models,
         references=references,
         qc_metrics=qc_metrics,
@@ -989,6 +991,7 @@ def _cluster_card(card: dict[str, Any]) -> str:
 def _cluster_evidence_stack(
     *,
     markers: list[Any],
+    marker_signatures: list[Any],
     models: list[Any],
     references: list[Any],
     qc_metrics: Any,
@@ -997,7 +1000,7 @@ def _cluster_evidence_stack(
     reasoning: dict[str, Any],
 ) -> str:
     layers = [
-        _marker_evidence_layer(markers, references),
+        _marker_evidence_layer(markers, marker_signatures, references),
         _reference_evidence_layer(references),
         _model_evidence_layer(models),
         _ontology_evidence_layer(),
@@ -1031,7 +1034,7 @@ def _evidence_layer(title: str, purpose: str, tool: str, rows: list[tuple[str, s
     )
 
 
-def _marker_evidence_layer(markers: list[Any], references: list[Any]) -> str:
+def _marker_evidence_layer(markers: list[Any], marker_signatures: list[Any], references: list[Any]) -> str:
     rows: list[tuple[str, str]] = []
     marker_dicts = _marker_dicts(markers)
     if marker_dicts:
@@ -1041,6 +1044,9 @@ def _marker_evidence_layer(markers: list[Any], references: list[Any]) -> str:
         rows.append(("Marker rule", "Strong: log2FC > 1 and padj < 0.01; moderate: log2FC > 0.5 and padj < 0.05"))
         rows.append(("Strength summary", f"{len(strong)} strong, {len(moderate)} moderate, {len(weak)} weak among top {len(marker_dicts)} markers"))
         rows.append(("Top statistics", _format_marker_statistics(marker_dicts[:6])))
+    signature_rows = _format_marker_signatures(marker_signatures)
+    if signature_rows:
+        rows.append(("Signature scoring", signature_rows))
     builtin = [r for r in references if isinstance(r, dict) and r.get("ref_id") == "builtin"]
     if builtin:
         parts = []
@@ -1059,6 +1065,29 @@ def _marker_evidence_layer(markers: list[Any], references: list[Any]) -> str:
         rows or [("Status", "No marker evidence available for this cluster.")],
         status="Active" if rows else "Missing",
     )
+
+
+def _format_marker_signatures(marker_signatures: list[Any]) -> str:
+    parts = []
+    for signature in marker_signatures[:3]:
+        if not isinstance(signature, dict):
+            continue
+        label = str(signature.get("label") or "")
+        coverage = _optional_number(signature.get("coverage"))
+        overlap = _optional_number(signature.get("overlap_score"))
+        matched = signature.get("matched_genes") or []
+        matched_text = ", ".join(str(gene) for gene in matched[:5])
+        if not label:
+            continue
+        metric_parts = []
+        if coverage is not None:
+            metric_parts.append(f"coverage {coverage:.0%}")
+        if overlap is not None:
+            metric_parts.append(f"overlap {overlap:.2f}")
+        if matched_text:
+            metric_parts.append(f"matched: {matched_text}")
+        parts.append(f"{label} ({'; '.join(metric_parts)})")
+    return "; ".join(parts)
 
 
 def _format_marker_statistics(markers: list[dict[str, Any]]) -> str:

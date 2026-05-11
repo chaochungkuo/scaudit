@@ -352,6 +352,7 @@ def build_annotation_cards(
 
 def _build_card(cluster_id: str, cell_count: int, ev: ClusterEvidence | None) -> dict[str, Any]:
     markers = ev.markers if ev else []
+    marker_signatures = ev.marker_signatures if ev else []
     celltypist_label = ev.celltypist_label if ev else None
     celltypist_prob = ev.celltypist_prob if ev else None
     ref_matches = ev.reference_matches if ev else []
@@ -374,6 +375,7 @@ def _build_card(cluster_id: str, cell_count: int, ev: ClusterEvidence | None) ->
         "confidence": confidence,
         "evidence": {
             "markers": [m.to_dict() for m in markers[:10]],
+            "marker_signatures": marker_signatures[:5],
             "models": (
                 [{"model": "CellTypist", "label": celltypist_label, "probability": celltypist_prob}]
                 if celltypist_label

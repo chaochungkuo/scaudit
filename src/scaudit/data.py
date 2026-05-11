@@ -77,6 +77,7 @@ class MarkerGene:
 class ClusterEvidence:
     cluster_id: str
     markers: list[MarkerGene] = field(default_factory=list)
+    marker_signatures: list[dict[str, Any]] = field(default_factory=list)
     celltypist_label: str | None = None
     celltypist_prob: float | None = None
     reference_matches: list[dict[str, Any]] = field(default_factory=list)
@@ -88,6 +89,7 @@ class ClusterEvidence:
         return {
             "cluster_id": self.cluster_id,
             "markers": [m.to_dict() for m in self.markers],
+            "marker_signatures": self.marker_signatures,
             "celltypist_label": self.celltypist_label,
             "celltypist_prob": self.celltypist_prob,
             "reference_matches": self.reference_matches,
@@ -296,6 +298,7 @@ def compute_cluster_evidence(
     query_gene_id_type = infer_gene_id_type(query_gene_counts)
 
     _fill_marker_evidence(adata, cluster_key, evidence, n_top_genes)
+    _fill_marker_signature_evidence(evidence)
     _fill_qc_evidence(adata, cluster_key, evidence)
     _fill_composition_evidence(adata, cluster_key, evidence, sample_key=sample_key, batch_key=batch_key)
     _fill_marker_db_evidence(evidence)
@@ -485,6 +488,39 @@ def _fill_marker_db_evidence(evidence: dict[str, ClusterEvidence]) -> None:
         db_matches = lookup_cell_type(query_genes)
         # Prepend builtin matches before any reference h5ad matches (added later)
         ev.reference_matches = db_matches + ev.reference_matches
+
+
+def _fill_marker_signature_evidence(evidence: dict[str, ClusterEvidence], top_n: int = 5) -> None:
+    from scaudit.markers import MARKER_DB
+
+    for ev in evidence.values():
+        query_genes = {m.gene for m in ev.markers if _is_informative_marker(m)}
+        if not query_genes:
+            continue
+        signatures = []
+        for label, genes in MARKER_DB.items():
+            signature_genes = {str(g) for g in genes}
+            matched = sorted(query_genes & signature_genes)
+            if not matched:
+                continue
+            missing = sorted(signature_genes - query_genes)
+            coverage = len(matched) / len(signature_genes) if signature_genes else 0.0
+            overlap_score = len(matched) / len(query_genes | signature_genes)
+            signatures.append(
+                {
+                    "source": "builtin_marker_signature",
+                    "tool": "scaudit.markers.MARKER_DB",
+                    "label": label,
+                    "matched_genes": matched,
+                    "missing_genes": missing[:10],
+                    "n_matched": len(matched),
+                    "n_signature_genes": len(signature_genes),
+                    "coverage": round(coverage, 3),
+                    "overlap_score": round(overlap_score, 3),
+                }
+            )
+        signatures.sort(key=lambda item: (item["n_matched"], item["coverage"], item["overlap_score"]), reverse=True)
+        ev.marker_signatures = signatures[:top_n]
 
 
 def _fill_celltypist_evidence(
