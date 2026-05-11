@@ -31,6 +31,11 @@ _LOGO_MARK = """
   <circle cx="25" cy="26" r="1.9" fill="#7c3aed"/>
 </svg>
 """
+_GITHUB_MARK = """
+<svg class="github-mark" viewBox="0 0 16 16" aria-hidden="true">
+  <path fill="currentColor" d="M8 0C3.58 0 0 3.67 0 8.2c0 3.63 2.29 6.7 5.47 7.79.4.08.55-.18.55-.4 0-.2-.01-.86-.01-1.56-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.16-.68-.56-.01-.57.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.1-1.78-.21-3.64-.91-3.64-4.03 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.43 7.43 0 0 1 8 3.95c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.13-1.87 3.82-3.65 4.03.29.26.54.76.54 1.53 0 1.1-.01 1.99-.01 2.26 0 .22.15.48.55.4A8.1 8.1 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"/>
+</svg>
+"""
 
 _DECISION_COLOR: dict[str, str] = {
     "Accepted": "#2a9d5c",
@@ -1189,7 +1194,11 @@ def _write_page(
     if back_link:
         href, label = back_link
         nav_html = f'<a href="{html.escape(href)}" class="nav-link">{html.escape(label)}</a>'
-    github_html = f'<a href="{html.escape(_GITHUB_URL)}" class="nav-link" target="_blank" rel="noopener noreferrer">GitHub</a>'
+    github_html = (
+        f'<a href="{html.escape(_GITHUB_URL)}" class="nav-link github-link" '
+        f'target="_blank" rel="noopener noreferrer" aria-label="Open scaudit on GitHub">'
+        f'{_GITHUB_MARK}<span>GitHub</span></a>'
+    )
 
     path.write_text(
         f"""<!doctype html>
@@ -1285,6 +1294,9 @@ _CSS = """
     flex-wrap: wrap;
   }
   .nav-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font-size: 13px;
     font-weight: 600;
     color: var(--blue);
@@ -1296,6 +1308,14 @@ _CSS = """
     transition: background 0.1s;
   }
   .nav-link:hover { background: var(--bg); }
+  .github-link {
+    color: var(--navy);
+  }
+  .github-mark {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+  }
   @media (max-width: 560px) {
     header { padding: 10px 16px; }
     .logo { font-size: 16px; }
