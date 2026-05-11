@@ -132,6 +132,7 @@ def _write_report_html(
     )
 
     umap_html = _umap_section(cards, diagnosis) if cards else ""
+    stack_html = _evidence_stack_section(cards) if cards else ""
     completeness_html = _evidence_completeness_section(cards) if cards else ""
     reference_html = _reference_match_section(cards) if cards else ""
     marker_html = _marker_expression_section(cards) if cards else ""
@@ -151,6 +152,7 @@ def _write_report_html(
     </section>
     <div class="metrics-grid">{metrics}</div>
     {umap_html}
+    {stack_html}
     {completeness_html}
     {reference_html}
     {marker_html}
@@ -363,6 +365,86 @@ def _grouped_traces(groups: dict[str, dict[str, list[Any]]], colors: dict[str, s
             },
         })
     return traces
+
+
+# ── Evidence stack overview ──────────────────────────────────────────────────
+
+
+def _evidence_stack_section(cards: list[dict[str, Any]]) -> str:
+    rows = [
+        {
+            "layer": "Marker-based evidence",
+            "purpose": "Biological interpretability",
+            "tools": "Scanpy rank_genes_groups; built-in marker DB",
+            "outputs": "DE markers, log2FC, padj, marker-set overlap",
+            "authority": "Can support labels and confidence",
+            "available": any(card.get("evidence", {}).get("markers") for card in cards),
+        },
+        {
+            "layer": "Reference-based mapping",
+            "purpose": "Biological grounding",
+            "tools": "Local/reference h5ad matching; public reference registry",
+            "outputs": "Reference labels, Jaccard, shared genes, reference metadata",
+            "authority": "Can support labels and expose disagreement",
+            "available": any(
+                any(isinstance(ref, dict) and ref.get("ref_id") != "builtin" for ref in card.get("evidence", {}).get("references", []))
+                for card in cards
+            ),
+        },
+        {
+            "layer": "Model-based prediction",
+            "purpose": "Statistical inference",
+            "tools": "CellTypist; future scVI/scANVI adapters",
+            "outputs": "Predicted labels, probabilities, cluster-level votes",
+            "authority": "Can support labels but is not directly comparable to reference scores",
+            "available": any(card.get("evidence", {}).get("models") for card in cards),
+        },
+        {
+            "layer": "Ontology reasoning",
+            "purpose": "Hierarchical consistency",
+            "tools": "Planned Cell Ontology layer",
+            "outputs": "Lineage/subtype hierarchy, synonym normalization, conflict checks",
+            "authority": "Planned consistency check, not yet active",
+            "available": any(card.get("evidence", {}).get("ontology") for card in cards),
+        },
+        {
+            "layer": "LLM explanation",
+            "purpose": "Human-readable interpretation",
+            "tools": "OpenAI-compatible or Anthropic provider",
+            "outputs": "Grounded narrative summary from structured evidence",
+            "authority": "Explanation only; cannot create labels or override decisions",
+            "available": any(card.get("reasoning", {}).get("summary_source") == "llm" for card in cards),
+        },
+    ]
+    row_html = "".join(_evidence_stack_row(row) for row in rows)
+    return f"""
+    <section class="evidence-stack-section">
+      <div class="section-header">
+        <h2>Evidence stack</h2>
+        <span class="muted">Transparent roles, tools, and authority boundaries</span>
+      </div>
+      <div class="evidence-stack-grid">{row_html}</div>
+    </section>
+    """
+
+
+def _evidence_stack_row(row: dict[str, Any]) -> str:
+    status = "Active" if row["available"] else "Missing" if row["layer"] != "Ontology reasoning" else "Planned"
+    status_class = "is-active" if row["available"] else "is-planned" if row["layer"] == "Ontology reasoning" else "is-missing"
+    return (
+        f'<article class="evidence-stack-card">'
+        f'<div class="stack-card-head">'
+        f'<h3>{html.escape(str(row["layer"]))}</h3>'
+        f'<span class="stack-status {status_class}">{html.escape(status)}</span>'
+        f"</div>"
+        f'<p class="stack-purpose">{html.escape(str(row["purpose"]))}</p>'
+        f'<dl class="stack-meta">'
+        f'<dt>Tool/package</dt><dd>{html.escape(str(row["tools"]))}</dd>'
+        f'<dt>Output</dt><dd>{html.escape(str(row["outputs"]))}</dd>'
+        f'<dt>Decision role</dt><dd>{html.escape(str(row["authority"]))}</dd>'
+        f"</dl>"
+        f"</article>"
+    )
 
 
 # ── Evidence completeness ────────────────────────────────────────────────────
@@ -853,61 +935,17 @@ def _cluster_card(card: dict[str, Any]) -> str:
     )
     body_parts.append(f'<div class="conf-row">{conf_html}</div>')
 
-    # ── Evidence block ──
-    ev_rows: list[tuple[str, str]] = []
-    if markers:
-        names = ", ".join(str(m.get("gene") or m) if isinstance(m, dict) else str(m) for m in markers[:10])
-        ev_rows.append(("Markers", names))
-    if models:
-        lines = []
-        for m in models:
-            if isinstance(m, dict):
-                name = str(m.get("model") or m.get("name") or "model")
-                lbl = str(m.get("label") or "")
-                prob = m.get("probability") or m.get("score")
-                prob_str = f" ({prob:.0%})" if isinstance(prob, (int, float)) else ""
-                lines.append(f"{name}: {lbl}{prob_str}")
-        if lines:
-            ev_rows.append(("Models", ", ".join(lines)))
-    if references:
-        builtin = [r for r in references if isinstance(r, dict) and r.get("ref_id") == "builtin"]
-        external = [r for r in references if isinstance(r, dict) and r.get("ref_id") != "builtin"]
-        if builtin:
-            parts = []
-            for r in builtin[:3]:
-                lbl = str(r.get("label") or "")
-                j = r.get("jaccard")
-                j_str = f" ({j:.2f})" if isinstance(j, (int, float)) else ""
-                parts.append(f"{lbl}{j_str}")
-            ev_rows.append(("Marker DB", ", ".join(parts)))
-        if external:
-            ref_lines = []
-            for r in external:
-                ref_id = str(r.get("ref_id") or r.get("reference") or r.get("name") or "ref")
-                lbl = str(r.get("label") or "")
-                j = r.get("jaccard") or r.get("similarity")
-                j_str = f" (J={j:.2f})" if isinstance(j, (int, float)) else ""
-                ref_lines.append(f"{ref_id}:{lbl}{j_str}")
-            ev_rows.append(("References", ", ".join(ref_lines)))
-    qc_line = _format_qc_metrics(qc_metrics)
-    if qc_line:
-        ev_rows.append(("QC metrics", qc_line))
-    composition_line = _format_composition(composition)
-    if composition_line:
-        ev_rows.append(("Composition", composition_line))
-    if qc_warnings:
-        ev_rows.append(("QC flags", "; ".join(str(w) for w in qc_warnings)))
-
-    if ev_rows:
-        dl_html = "".join(
-            f"<dt>{html.escape(k)}</dt><dd>{html.escape(v)}</dd>" for k, v in ev_rows
-        )
-        body_parts.append(
-            f'<div class="card-block">'
-            f'<p class="block-title">Evidence</p>'
-            f'<dl class="ev-list">{dl_html}</dl>'
-            f"</div>"
-        )
+    evidence_stack = _cluster_evidence_stack(
+        markers=markers,
+        models=models,
+        references=references,
+        qc_metrics=qc_metrics,
+        composition=composition,
+        qc_warnings=qc_warnings,
+        reasoning=reasoning,
+    )
+    if evidence_stack:
+        body_parts.append(evidence_stack)
 
     marker_bars = _marker_bar_block(markers)
     if marker_bars:
@@ -945,6 +983,156 @@ def _cluster_card(card: dict[str, Any]) -> str:
         f"  </summary>\n"
         f'  <div class="cluster-body">{card_body}</div>\n'
         f"</details>"
+    )
+
+
+def _cluster_evidence_stack(
+    *,
+    markers: list[Any],
+    models: list[Any],
+    references: list[Any],
+    qc_metrics: Any,
+    composition: Any,
+    qc_warnings: list[Any],
+    reasoning: dict[str, Any],
+) -> str:
+    layers = [
+        _marker_evidence_layer(markers, references),
+        _reference_evidence_layer(references),
+        _model_evidence_layer(models),
+        _ontology_evidence_layer(),
+        _llm_evidence_layer(reasoning),
+        _qc_evidence_layer(qc_metrics, composition, qc_warnings),
+    ]
+    layer_html = "".join(layer for layer in layers if layer)
+    if not layer_html:
+        return ""
+    return (
+        f'<div class="card-block evidence-stack-block">'
+        f'<p class="block-title">Evidence stack</p>'
+        f'<div class="cluster-evidence-stack">{layer_html}</div>'
+        f"</div>"
+    )
+
+
+def _evidence_layer(title: str, purpose: str, tool: str, rows: list[tuple[str, str]], *, status: str = "Active") -> str:
+    rows_html = "".join(f"<dt>{html.escape(k)}</dt><dd>{html.escape(v)}</dd>" for k, v in rows)
+    status_class = "is-active" if status == "Active" else "is-planned" if status == "Planned" else "is-missing"
+    return (
+        f'<section class="evidence-layer">'
+        f'<div class="evidence-layer-head">'
+        f'<h4>{html.escape(title)}</h4>'
+        f'<span class="stack-status {status_class}">{html.escape(status)}</span>'
+        f"</div>"
+        f'<p class="layer-purpose">{html.escape(purpose)}</p>'
+        f'<p class="layer-tool">{html.escape(tool)}</p>'
+        f'<dl class="ev-list">{rows_html}</dl>'
+        f"</section>"
+    )
+
+
+def _marker_evidence_layer(markers: list[Any], references: list[Any]) -> str:
+    rows: list[tuple[str, str]] = []
+    if markers:
+        names = ", ".join(str(m.get("gene") or m) if isinstance(m, dict) else str(m) for m in markers[:10])
+        rows.append(("Observed markers", names))
+    builtin = [r for r in references if isinstance(r, dict) and r.get("ref_id") == "builtin"]
+    if builtin:
+        parts = []
+        for r in builtin[:3]:
+            lbl = str(r.get("label") or "")
+            j = r.get("jaccard")
+            j_str = f" ({j:.2f})" if isinstance(j, (int, float)) else ""
+            parts.append(f"{lbl}{j_str}")
+        rows.append(("Built-in marker DB", ", ".join(parts)))
+    return _evidence_layer(
+        "Marker-based evidence",
+        "Biological interpretability",
+        "Scanpy rank_genes_groups; built-in marker DB",
+        rows or [("Status", "No marker evidence available for this cluster.")],
+        status="Active" if rows else "Missing",
+    )
+
+
+def _reference_evidence_layer(references: list[Any]) -> str:
+    external = [r for r in references if isinstance(r, dict) and r.get("ref_id") != "builtin"]
+    rows = []
+    for r in external:
+        ref_id = str(r.get("ref_id") or r.get("reference") or r.get("name") or "ref")
+        lbl = str(r.get("label") or "")
+        j = r.get("jaccard") or r.get("similarity")
+        j_str = f" (J={j:.2f})" if isinstance(j, (int, float)) else ""
+        rows.append((ref_id, f"{lbl}{j_str}"))
+    return _evidence_layer(
+        "Reference-based mapping",
+        "Biological grounding",
+        "Local/reference h5ad matching; public reference registry",
+        rows or [("Status", "No external reference match available for this cluster.")],
+        status="Active" if rows else "Missing",
+    )
+
+
+def _model_evidence_layer(models: list[Any]) -> str:
+    rows = []
+    for m in models:
+        if isinstance(m, dict):
+            name = str(m.get("model") or m.get("name") or "model")
+            lbl = str(m.get("label") or "")
+            prob = m.get("probability") or m.get("score")
+            prob_str = f" ({prob:.0%})" if isinstance(prob, (int, float)) else ""
+            rows.append((name, f"{lbl}{prob_str}"))
+    return _evidence_layer(
+        "Model-based prediction",
+        "Statistical inference",
+        "CellTypist; future scVI/scANVI adapters",
+        rows or [("Status", "No model prediction available for this cluster.")],
+        status="Active" if rows else "Missing",
+    )
+
+
+def _ontology_evidence_layer() -> str:
+    return _evidence_layer(
+        "Ontology reasoning",
+        "Hierarchical consistency",
+        "Planned Cell Ontology layer",
+        [("Status", "Not active yet; planned for lineage/subtype consistency checks.")],
+        status="Planned",
+    )
+
+
+def _llm_evidence_layer(reasoning: dict[str, Any]) -> str:
+    source = str(reasoning.get("summary_source") or "")
+    model = str(reasoning.get("summary_model") or "")
+    summary = str(reasoning.get("summary") or "")
+    rows = []
+    if source == "llm":
+        rows.append(("Model", model or "configured LLM"))
+        rows.append(("Summary", summary))
+    return _evidence_layer(
+        "LLM explanation",
+        "Human-readable interpretation",
+        "OpenAI-compatible or Anthropic provider; explanation-only",
+        rows or [("Status", "No LLM-generated explanation available for this cluster.")],
+        status="Active" if rows else "Missing",
+    )
+
+
+def _qc_evidence_layer(qc_metrics: Any, composition: Any, qc_warnings: list[Any]) -> str:
+    rows = []
+    qc_line = _format_qc_metrics(qc_metrics)
+    if qc_line:
+        rows.append(("QC metrics", qc_line))
+    composition_line = _format_composition(composition)
+    if composition_line:
+        rows.append(("Composition", composition_line))
+    if qc_warnings:
+        rows.append(("QC flags", "; ".join(str(w) for w in qc_warnings)))
+    return _evidence_layer(
+        "QC and artifact evidence",
+        "Safety and artifact detection",
+        "AnnData obs QC fields; sample/batch composition checks",
+        rows or [("Status", "No QC or composition evidence available for this cluster.")],
+        status="Active" if rows else "Missing",
     )
 
 
@@ -1397,6 +1585,71 @@ _CSS = """
   .umap-tab:hover { background: #eef2f9; color: var(--navy); }
   .umap-tab.is-active { background: var(--navy); color: white; }
 
+  /* ── Evidence stack overview ── */
+  .evidence-stack-section {
+    padding: 20px 24px;
+  }
+  .evidence-stack-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px;
+  }
+  .evidence-stack-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: #fbfcff;
+  }
+  .stack-card-head,
+  .evidence-layer-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .evidence-stack-card h3,
+  .evidence-layer h4 {
+    margin: 0;
+    color: var(--navy);
+    font-size: 13px;
+    font-weight: 800;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .stack-status {
+    flex: 0 0 auto;
+    border-radius: 999px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1.4;
+  }
+  .stack-status.is-active { background: #e3f5ec; color: #1a6b3c; }
+  .stack-status.is-missing { background: #eef0f4; color: var(--muted); }
+  .stack-status.is-planned { background: #fff3e0; color: #b45309; }
+  .stack-purpose {
+    margin: 6px 0 8px;
+    color: var(--teal);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .stack-meta {
+    display: grid;
+    grid-template-columns: 88px 1fr;
+    gap: 5px 10px;
+    margin: 0;
+    font-size: 12px;
+  }
+  .stack-meta dt {
+    color: var(--muted);
+    font-weight: 700;
+  }
+  .stack-meta dd {
+    margin: 0;
+    color: var(--navy);
+    line-height: 1.4;
+  }
+
   /* ── Evidence completeness ── */
   .evidence-completeness {
     padding: 20px 24px;
@@ -1640,6 +1893,30 @@ _CSS = """
   .ev-list dd {
     margin: 0; font-size: 13px; line-height: 1.5;
     word-break: break-word;
+  }
+  .evidence-stack-block {
+    overflow: hidden;
+  }
+  .cluster-evidence-stack {
+    display: grid;
+    gap: 8px;
+  }
+  .evidence-layer {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: #fbfcff;
+  }
+  .layer-purpose {
+    margin: 4px 0 2px;
+    color: var(--teal);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .layer-tool {
+    margin: 0 0 8px;
+    color: var(--muted);
+    font-size: 12px;
   }
   .marker-bars-block {
     overflow: hidden;
