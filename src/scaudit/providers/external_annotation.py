@@ -152,7 +152,9 @@ def write_external_annotation_provider_outputs(
 ) -> dict[str, Any]:
     spec = PROVIDERS[provider_id]
     output_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir = output_dir / "figures"
     tables_dir = output_dir / "tables"
+    figures_dir.mkdir(parents=True, exist_ok=True)
     tables_dir.mkdir(parents=True, exist_ok=True)
 
     started_at = started_at or utc_now()
@@ -178,6 +180,9 @@ def write_external_annotation_provider_outputs(
     ]
     _write_csv(tables_dir / "provider_status.csv", status_rows, STATUS_FIELDS)
     _write_csv(tables_dir / "cluster_predictions.csv", prediction_rows, PREDICTION_FIELDS)
+    figure_artifacts = _write_cluster_umap(dataset_path, cluster_key, figures_dir, tables_dir, warnings)
+    prediction_tabs_path = output_dir / "cluster_prediction_tabs.md"
+    prediction_tabs_path.write_text(_prediction_tabs_markdown(prediction_rows), encoding="utf-8")
     callout_path = output_dir / "callouts.md"
     callout_path.write_text(_callout_markdown(spec, warnings), encoding="utf-8")
 
@@ -224,8 +229,8 @@ def write_external_annotation_provider_outputs(
         "artifacts": {
             "qmd": f"{spec.provider_id}.qmd",
             "html": f"{spec.provider_id}.html",
-            "figures": [],
-            "tables": ["tables/provider_status.csv", "tables/cluster_predictions.csv"],
+            "figures": [relative_to(Path(item), output_dir) for item in figure_artifacts],
+            "tables": ["tables/provider_status.csv", "tables/cluster_predictions.csv", "tables/cluster_umap.source.csv"],
         },
         "results": {
             "summary": _summary(spec, prediction_rows),
@@ -345,6 +350,162 @@ def _scoring_parameters(spec: ExternalAnnotationProvider, *, species: str, tissu
         "tissue": tissue,
         "score_components": ["signature coverage", "Jaccard overlap", "rank/effect weighted marker support"],
     }
+
+
+def _write_cluster_umap(dataset_path: Path, cluster_key: str, figures_dir: Path, tables_dir: Path, warnings: list[str]) -> list[Path]:
+    if not dataset_path.exists() or not cluster_key:
+        return []
+    try:
+        import anndata as ad
+        import matplotlib.pyplot as plt
+        import pandas as pd
+    except Exception:
+        warnings.append("anndata, pandas, or matplotlib was unavailable; cluster UMAP figure was skipped.")
+        return []
+
+    try:
+        adata = ad.read_h5ad(dataset_path)
+    except Exception:
+        warnings.append("Input h5ad could not be read for cluster UMAP generation.")
+        return []
+    if cluster_key not in adata.obs:
+        warnings.append(f"cluster_key '{cluster_key}' was not found; cluster UMAP generation was skipped.")
+        return []
+    if "X_umap" not in adata.obsm:
+        warnings.append("UMAP coordinates were not found in adata.obsm['X_umap']; cluster UMAP figure was skipped.")
+        return []
+
+    coords = adata.obsm["X_umap"]
+    cluster_values = adata.obs[cluster_key].astype(str)
+    rows = [
+        {"umap_1": float(x), "umap_2": float(y), "cluster_id": str(cluster)}
+        for x, y, cluster in zip(coords[:, 0], coords[:, 1], cluster_values)
+    ]
+    df = pd.DataFrame(rows)
+    df.to_csv(tables_dir / "cluster_umap.source.csv", index=False)
+
+    clusters = sorted(df["cluster_id"].unique().tolist())
+    fig, ax = plt.subplots(figsize=(5.8, 5.2))
+    for index, cluster in enumerate(clusters):
+        subset = df[df["cluster_id"] == cluster]
+        ax.scatter(
+            subset["umap_1"],
+            subset["umap_2"],
+            s=5,
+            alpha=0.72,
+            linewidths=0,
+            label=str(cluster),
+            color=_provider_palette(index),
+        )
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    ax.set_title("Clusters")
+    ax.legend(title="Cluster", loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False, markerscale=2.4)
+    fig.subplots_adjust(left=0.11, right=0.78, top=0.9, bottom=0.12)
+    return _save_figure(fig, figures_dir / "cluster_umap")
+
+
+def _provider_palette(index: int) -> str:
+    palette = [
+        "#2f67c8",
+        "#2a9d5c",
+        "#d97706",
+        "#7446a8",
+        "#129a9f",
+        "#c0392b",
+        "#6b8e23",
+        "#be185d",
+        "#4b5563",
+        "#b45309",
+    ]
+    return palette[index % len(palette)]
+
+
+def _save_figure(fig: Any, stem: Path) -> list[Path]:
+    paths = [stem.with_suffix(suffix) for suffix in (".svg", ".pdf", ".png")]
+    for path in paths:
+        fig.savefig(path, bbox_inches="tight", pad_inches=0.08)
+    try:
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+    except Exception:
+        pass
+    return paths
+
+
+def _prediction_tabs_markdown(prediction_rows: list[dict[str, Any]]) -> str:
+    if not prediction_rows:
+        return "No cluster-level predictions are available. Check provider warnings and marker evidence availability.\n"
+
+    clusters = sorted({str(row["cluster_id"]) for row in prediction_rows})
+    lines = ["::: {.panel-tabset}", ""]
+    for cluster in clusters:
+        rows = [row for row in prediction_rows if str(row["cluster_id"]) == cluster]
+        rows.sort(key=lambda row: int(row.get("rank") or 9999))
+        lines.append(f"## Cluster {html.escape(cluster)}")
+        lines.append("")
+        lines.append(_prediction_summary_table(rows))
+        lines.append("")
+        lines.append("<details class=\"signature-gene-details\">")
+        lines.append("<summary>Show matched markers and sources</summary>")
+        lines.append("")
+        lines.append(_prediction_details(rows))
+        lines.append("</details>")
+        lines.append("")
+    lines.append(":::")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _prediction_summary_table(rows: list[dict[str, Any]]) -> str:
+    headers = ["Rank", "Label", "Score", "Confidence", "Matched", "Coverage", "Jaccard"]
+    body = []
+    for row in rows:
+        body.append(
+            "<tr>"
+            f"<td>{html.escape(str(row.get('rank', '')))}</td>"
+            f"<td>{html.escape(str(row.get('label', '')))}</td>"
+            f"<td>{_format_decimal(row.get('score'))}</td>"
+            f"<td>{html.escape(str(row.get('confidence', '')))}</td>"
+            f"<td>{html.escape(str(row.get('n_matched', '')))}</td>"
+            f"<td>{_format_fraction(row.get('coverage'))}</td>"
+            f"<td>{_format_decimal(row.get('jaccard'))}</td>"
+            "</tr>"
+        )
+    head_html = "".join(f"<th>{header}</th>" for header in headers)
+    body_html = "".join(body)
+    return f'<table class="scaudit-table cluster-prediction-table"><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>'
+
+
+def _prediction_details(rows: list[dict[str, Any]]) -> str:
+    items = []
+    for row in rows:
+        label = html.escape(str(row.get("label", "")))
+        matched = html.escape(str(row.get("matched_markers", "") or "none"))
+        source = html.escape(str(row.get("source", "") or "not recorded"))
+        items.append(
+            "<section class=\"signature-gene-block\">"
+            f"<h4>{label}</h4>"
+            f"<p><strong>Matched markers:</strong> {matched}</p>"
+            f"<p><strong>Source:</strong> {source}</p>"
+            "</section>"
+        )
+    return "\n".join(items)
+
+
+def _format_decimal(value: Any) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return html.escape(str(value or ""))
+
+
+def _format_fraction(value: Any) -> str:
+    try:
+        return f"{float(value):.0%}"
+    except (TypeError, ValueError):
+        return html.escape(str(value or ""))
 
 
 def _software_versions(spec: ExternalAnnotationProvider) -> dict[str, str]:
@@ -479,10 +640,74 @@ details.code-fold[open] > summary {{
   vertical-align: top;
 }}
 
+.scaudit-table tbody tr:last-child td {{
+  border-bottom: 0;
+}}
+
 .scaudit-table th {{
   background: #f4f7fb;
   color: #18324a;
   font-weight: 700;
+}}
+
+.cluster-prediction-table {{
+  margin-bottom: 1.2rem;
+}}
+
+.panel-tabset .tab-content {{
+  border: 0;
+}}
+
+.panel-tabset .nav-tabs {{
+  border-bottom: 0;
+}}
+
+.marker-signature-workspace {{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}}
+
+.marker-signature-umap {{
+  width: 100%;
+}}
+
+.marker-signature-umap img {{
+  width: 100%;
+  height: auto;
+}}
+
+.marker-signature-tabs {{
+  min-width: 0;
+}}
+
+.signature-gene-details {{
+  margin: 0.35rem 0 1.1rem;
+  padding: 0.55rem 0.7rem;
+  background: #fbfcff;
+}}
+
+.signature-gene-details summary {{
+  color: #18324a;
+  cursor: pointer;
+  font-weight: 650;
+}}
+
+.signature-gene-block {{
+  border-top: 1px solid #e8edf5;
+  margin-top: 0.65rem;
+  padding-top: 0.55rem;
+}}
+
+.signature-gene-block h4 {{
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+}}
+
+.signature-gene-block p {{
+  margin: 0.2rem 0;
+  overflow-wrap: anywhere;
 }}
 </style>
 
@@ -548,16 +773,17 @@ HTML(status.to_html(index=False, classes="scaudit-table", border=0))
 
 ## Cluster-Level Predictions
 
-```{{python}}
-import pandas as pd
-from IPython.display import HTML, Markdown, display
+The cluster UMAP is shown with provider predictions below. Each tab contains candidate labels for one cluster. Scores, coverage, and Jaccard values are rounded for readability; full-precision values are available in `tables/cluster_predictions.csv` and `{spec.result_file}`.
 
-predictions = pd.read_csv("tables/cluster_predictions.csv")
-if predictions.empty:
-    display(Markdown("No cluster-level predictions are available. Check provider warnings and marker evidence availability."))
-else:
-    display(HTML(predictions.to_html(index=False, classes="scaudit-table", border=0)))
-```
+::: {{.marker-signature-workspace}}
+::: {{.marker-signature-umap}}
+![Cluster UMAP](figures/cluster_umap.png)
+:::
+
+::: {{.marker-signature-tabs}}
+{{{{< include cluster_prediction_tabs.md >}}}}
+:::
+:::
 
 ## Method Contract
 
