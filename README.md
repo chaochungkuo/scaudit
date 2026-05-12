@@ -167,3 +167,5 @@ pixi run scaudit --help
 ## Project notes
 
 See [`product-notes/`](product-notes/) for architecture decisions, roadmap, methods, and design philosophy.
+
+See [`docs/provider-reports-design.md`](docs/provider-reports-design.md) for the focused qmd provider report design, callout usage, and evidence JSON contract.
