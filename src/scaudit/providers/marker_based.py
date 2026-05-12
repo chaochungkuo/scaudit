@@ -728,6 +728,10 @@ details.code-fold[open] > summary {{
   vertical-align: top;
 }}
 
+.scaudit-table tbody tr:last-child td {{
+  border-bottom: 0;
+}}
+
 .scaudit-table th {{
   background: #f4f7fb;
   color: #18324a;
@@ -740,6 +744,14 @@ details.code-fold[open] > summary {{
 
 .cluster-marker-table {{
   margin-bottom: 1.2rem;
+}}
+
+.panel-tabset .tab-content {{
+  border: 0;
+}}
+
+.panel-tabset .nav-tabs {{
+  border-bottom: 0;
 }}
 
 .marker-signature-workspace {{
@@ -756,8 +768,6 @@ details.code-fold[open] > summary {{
 .marker-signature-umap img {{
   width: 100%;
   height: auto;
-  border: 1px solid #e1e7ef;
-  border-radius: 8px;
 }}
 
 .marker-signature-tabs {{
@@ -766,8 +776,6 @@ details.code-fold[open] > summary {{
 
 .signature-gene-details {{
   margin: 0.35rem 0 1.1rem;
-  border: 1px solid #e1e7ef;
-  border-radius: 8px;
   padding: 0.55rem 0.7rem;
   background: #fbfcff;
 }}
