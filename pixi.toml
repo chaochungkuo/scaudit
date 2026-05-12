@@ -11,9 +11,17 @@ rich = "*"
 scanpy = "*"
 anndata = "*"
 scikit-learn = "*"
+quarto = "*"
+matplotlib = "*"
+seaborn = "*"
+pandas = "*"
+jupyter = "*"
+nbformat = "*"
+ipykernel = "*"
 
 [pypi-dependencies]
 scaudit = { path = ".", editable = true }
+great-tables = "*"
 
 [tasks]
 scaudit = "scaudit"

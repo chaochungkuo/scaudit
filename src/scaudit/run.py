@@ -13,6 +13,8 @@ from scaudit import __version__
 from scaudit.config import load_config, write_default_config
 from scaudit.data import ClusterEvidence, compute_cluster_evidence, diagnose_dataset
 from scaudit.markers import write_marker_evidence_csv
+from scaudit.providers import render_marker_provider_report
+from scaudit.providers.schema import write_json
 from scaudit.references import load_registry, registry_path
 from scaudit.report import render_draft_report, render_final_report
 
@@ -139,7 +141,19 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
     _write_annotation_summary(outputs.annotation_summary, annotation_cards)
     _write_review_table(outputs.review_table, annotation_cards)
     _write_json(outputs.reproducibility, _reproducibility_payload(config))
-    render_draft_report(report_dir, outputs.diagnosis, outputs.annotation_cards)
+    provider_reports = [
+        render_marker_provider_report(
+            dataset_path,
+            cluster_key,
+            output_dir,
+            evidence=evidence,
+            sample_key=sample_key,
+            batch_key=batch_key,
+        )
+    ]
+    provider_index_path = output_dir / "evidence_reports" / "provider_reports.json"
+    write_json(provider_index_path, {"providers": provider_reports})
+    render_draft_report(report_dir, outputs.diagnosis, outputs.annotation_cards, provider_index_path=provider_index_path)
     return outputs
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import math
+import os
 import random as _rng
 from pathlib import Path
 from typing import Any
@@ -69,13 +70,19 @@ _CLUSTER_PALETTE = [
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
-def render_draft_report(report_dir: Path, diagnosis_path: Path, annotation_cards_path: Path) -> Path:
+def render_draft_report(
+    report_dir: Path,
+    diagnosis_path: Path,
+    annotation_cards_path: Path,
+    provider_index_path: Path | None = None,
+) -> Path:
     report_dir.mkdir(parents=True, exist_ok=True)
     diagnosis = _read_json(diagnosis_path, {})
     cards = _read_json(annotation_cards_path, [])
+    provider_index = _read_json(provider_index_path, {}) if provider_index_path else {}
     report_path = report_dir / "report.html"
     review_path = report_dir / "review.html"
-    _write_report_html(report_path, diagnosis, cards, final=False)
+    _write_report_html(report_path, diagnosis, cards, final=False, provider_index=provider_index, provider_index_path=provider_index_path)
     _write_review_html(review_path, cards)
     return report_path
 
@@ -112,7 +119,13 @@ def render_final_report(report_dir: Path) -> Path:
 
 
 def _write_report_html(
-    path: Path, diagnosis: dict[str, Any], cards: list[dict[str, Any]], *, final: bool
+    path: Path,
+    diagnosis: dict[str, Any],
+    cards: list[dict[str, Any]],
+    *,
+    final: bool,
+    provider_index: dict[str, Any] | None = None,
+    provider_index_path: Path | None = None,
 ) -> None:
     label = "Final annotation audit" if final else "Draft annotation audit"
     n_cells = diagnosis.get("n_obs") or "—"
@@ -132,6 +145,7 @@ def _write_report_html(
     )
 
     umap_html = _umap_section(cards, diagnosis) if cards else ""
+    provider_html = _provider_reports_section(path.parent, provider_index or {}, provider_index_path) if provider_index else ""
     stack_html = _evidence_stack_section(cards) if cards else ""
     completeness_html = _evidence_completeness_section(cards) if cards else ""
     reference_html = _reference_match_section(cards) if cards else ""
@@ -152,6 +166,7 @@ def _write_report_html(
     </section>
     <div class="metrics-grid">{metrics}</div>
     {umap_html}
+    {provider_html}
     {stack_html}
     {completeness_html}
     {reference_html}
@@ -166,6 +181,61 @@ def _write_report_html(
 
 
 # ── UMAP overview ─────────────────────────────────────────────────────────────
+
+
+def _provider_reports_section(report_dir: Path, provider_index: dict[str, Any], provider_index_path: Path | None) -> str:
+    providers = provider_index.get("providers") if isinstance(provider_index, dict) else []
+    if not isinstance(providers, list) or not providers:
+        return ""
+    output_dir = provider_index_path.parent.parent if provider_index_path else report_dir.parent
+    cards = []
+    for provider in providers:
+        if not isinstance(provider, dict):
+            continue
+        name = html.escape(str(provider.get("name") or provider.get("id") or "Provider report"))
+        purpose = html.escape(str(provider.get("purpose") or ""))
+        status = html.escape(str(provider.get("status") or "unknown"))
+        top_finding = html.escape(str(provider.get("top_finding") or "No top finding reported."))
+        warning_count = len(provider.get("warnings") or [])
+        html_target = str(provider.get("html") or "")
+        json_target = str(provider.get("json") or "")
+        html_href = _relative_report_link(report_dir, output_dir / html_target) if html_target else ""
+        json_href = _relative_report_link(report_dir, output_dir / json_target) if json_target else ""
+        warning_text = f"{warning_count} warning{'s' if warning_count != 1 else ''}" if warning_count else "No warnings"
+        actions = []
+        if html_href:
+            actions.append(f'<a href="{html.escape(html_href)}">Open focused report</a>')
+        if json_href:
+            actions.append(f'<a href="{html.escape(json_href)}">Evidence JSON</a>')
+        cards.append(
+            f"""
+            <article class="provider-card">
+              <div class="provider-card-head">
+                <h3>{name}</h3>
+                <span class="provider-status">{status}</span>
+              </div>
+              <p class="provider-purpose">{purpose}</p>
+              <p class="provider-finding">{top_finding}</p>
+              <p class="provider-warning">{html.escape(warning_text)}</p>
+              <div class="provider-actions">{"".join(actions)}</div>
+            </article>
+            """
+        )
+    if not cards:
+        return ""
+    return f"""
+    <section class="provider-reports-section">
+      <div class="section-header">
+        <h2>Focused evidence reports</h2>
+        <span class="muted">Bird's-eye links to runnable qmd provider reports</span>
+      </div>
+      <div class="provider-grid">{"".join(cards)}</div>
+    </section>
+    """
+
+
+def _relative_report_link(report_dir: Path, target: Path) -> str:
+    return os.path.relpath(target, report_dir)
 
 
 def _umap_section(cards: list[dict[str, Any]], diagnosis: dict[str, Any]) -> str:
@@ -1628,6 +1698,60 @@ _CSS = """
                  text-transform: uppercase; letter-spacing: 0.06em; }
   .metric strong { display: block; font-size: 28px; font-weight: 800; margin-top: 4px; }
   .metric-highlight strong { color: var(--orange); }
+
+  /* ── Focused provider reports ── */
+  .provider-reports-section { padding: 20px 24px; }
+  .provider-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+  }
+  .provider-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    background: #fbfcff;
+  }
+  .provider-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .provider-card h3 {
+    margin: 0;
+    color: var(--navy);
+    font-size: 13px;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .provider-status {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 8px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .provider-purpose,
+  .provider-warning {
+    color: var(--muted);
+    font-size: 12px;
+    margin: 6px 0 0;
+  }
+  .provider-finding {
+    margin: 8px 0 0;
+    font-size: 13px;
+  }
+  .provider-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+    font-size: 13px;
+    font-weight: 600;
+  }
 
   /* ── UMAP section ── */
   .umap-section { padding: 20px 24px; }
