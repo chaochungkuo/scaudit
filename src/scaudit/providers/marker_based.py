@@ -466,6 +466,7 @@ def _write_marker_dotplot(dataset_path: Path, cluster_key: str, figures_dir: Pat
     ax.set_title("Marker expression dotplot")
     cbar = fig.colorbar(scatter, ax=ax)
     cbar.set_label("Mean expression")
+    fig.subplots_adjust(left=0.09, right=0.88, top=0.88, bottom=0.34)
     return _save_figure(fig, figures_dir / "marker_expression_dotplot")
 
 
@@ -507,7 +508,7 @@ def _gene_vector(adata: Any, gene_index: int, mask: Any) -> list[float] | None:
 def _save_figure(fig: Any, stem: Path) -> list[Path]:
     paths = [stem.with_suffix(suffix) for suffix in (".svg", ".pdf", ".png")]
     for path in paths:
-        fig.savefig(path)
+        fig.savefig(path, bbox_inches="tight", pad_inches=0.08)
     try:
         import matplotlib.pyplot as plt
 
