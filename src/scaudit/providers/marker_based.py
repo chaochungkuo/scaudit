@@ -690,14 +690,13 @@ details.code-fold[open] > summary {{
 
 .marker-signature-workspace {{
   display: grid;
-  grid-template-columns: minmax(260px, 0.95fr) minmax(360px, 1.45fr);
-  gap: 1.1rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
   align-items: start;
 }}
 
 .marker-signature-umap {{
-  position: sticky;
-  top: 1rem;
+  width: 100%;
 }}
 
 .marker-signature-umap img {{
@@ -741,15 +740,6 @@ details.code-fold[open] > summary {{
   overflow-wrap: anywhere;
 }}
 
-@media (max-width: 900px) {{
-  .marker-signature-workspace {{
-    grid-template-columns: 1fr;
-  }}
-
-  .marker-signature-umap {{
-    position: static;
-  }}
-}}
 </style>
 
 ## Question
