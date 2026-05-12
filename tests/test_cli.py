@@ -222,6 +222,10 @@ class CliTests(unittest.TestCase):
             self.assertTrue((output_dir / "evidence_reports" / "marker_based" / "marker_based.qmd").exists())
             self.assertTrue((output_dir / "evidence_reports" / "marker_based" / "marker_based.html").exists())
             self.assertTrue((output_dir / "evidence_reports" / "marker_based" / "marker_based.evidence.json").exists())
+            marker_qmd = (output_dir / "evidence_reports" / "marker_based" / "marker_based.qmd").read_text(encoding="utf-8")
+            self.assertIn("to_html(index=False", marker_qmd)
+            self.assertIn('display(Markdown(f"### Cluster {cluster_id}"))', marker_qmd)
+            self.assertIn("Signature scoring uses `scaudit.markers.MARKER_DB`", marker_qmd)
             self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.qmd").exists())
             self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.html").exists())
             self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.evidence.json").exists())
@@ -265,8 +269,9 @@ class CliTests(unittest.TestCase):
             self.assertEqual(evidence_json["schema_version"], "0.1.0")
             self.assertTrue((temp_path / "marker_based" / "tables" / "differential_markers.csv").exists())
             callouts = (temp_path / "marker_based" / "callouts.md").read_text(encoding="utf-8")
-            self.assertIn("callout-note", callouts)
-            self.assertIn("callout-important", callouts)
+            self.assertNotIn("callout-note", callouts)
+            self.assertNotIn("callout-important", callouts)
+            self.assertNotIn("callout-tip", callouts)
 
     def test_reference_provider_writes_standard_json_and_missing_reference_callout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

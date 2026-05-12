@@ -442,22 +442,7 @@ def _save_figure(fig: Any, stem: Path) -> list[Path]:
 
 
 def _callout_markdown(warnings: list[str], strength_rows: list[dict[str, Any]], signature_rows: list[dict[str, Any]]) -> str:
-    strong_clusters = [str(row["cluster_id"]) for row in strength_rows if int(row.get("strong", 0)) >= 3]
-    lines = [
-        "::: {.callout-note}",
-        "This focused report evaluates marker-based interpretability only. Reference mapping and model prediction are summarized in separate provider reports when available.",
-        ":::",
-        "",
-    ]
-    if strong_clusters:
-        lines.extend(
-            [
-                "::: {.callout-important}",
-                f"{len(strong_clusters)} clusters have at least 3 strong markers under the configured thresholds.",
-                ":::",
-                "",
-            ]
-        )
+    lines = []
     if warnings:
         lines.extend(["::: {.callout-warning}", "Warnings detected:", ""])
         lines.extend(f"- {warning}" for warning in warnings[:5])
@@ -471,14 +456,6 @@ def _callout_markdown(warnings: list[str], strength_rows: list[dict[str, Any]], 
                 "",
             ]
         )
-    lines.extend(
-        [
-            "::: {.callout-tip}",
-            "Technical readers can expand folded code blocks and inspect the CSV, SVG, PDF, PNG, and evidence JSON artifacts in this provider directory.",
-            ":::",
-            "",
-        ]
-    )
     return "\n".join(lines)
 
 
@@ -540,6 +517,29 @@ details.code-fold > summary {{
 details.code-fold[open] > summary {{
   background: #e8eef8;
 }}
+
+.scaudit-table {{
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.92rem;
+}}
+
+.scaudit-table th,
+.scaudit-table td {{
+  border-bottom: 1px solid #e1e7ef;
+  padding: 0.35rem 0.45rem;
+  vertical-align: top;
+}}
+
+.scaudit-table th {{
+  background: #f4f7fb;
+  color: #18324a;
+  font-weight: 700;
+}}
+
+.cluster-signature-table {{
+  margin-bottom: 1.2rem;
+}}
 </style>
 
 ## Question
@@ -591,24 +591,54 @@ payload["results"]["summary"]
 
 ```{{python}}
 import pandas as pd
+from IPython.display import HTML
 
-pd.read_csv("tables/marker_strength_summary.csv")
+strength = pd.read_csv("tables/marker_strength_summary.csv")
+HTML(strength.to_html(index=False, classes="scaudit-table", border=0))
 ```
 
 ## Marker Signature Scoring
 
+Signature scoring uses `scaudit.markers.MARKER_DB`. Coverage is the fraction of a known marker signature observed in the cluster marker set; overlap score is the Jaccard overlap between query markers and the signature genes.
+
 ```{{python}}
 import pandas as pd
+from IPython.display import HTML, Markdown, display
 
-pd.read_csv("tables/marker_signatures.csv").head(25)
+signatures = pd.read_csv("tables/marker_signatures.csv")
+display_columns = [
+    "rank",
+    "label",
+    "n_matched",
+    "n_signature_genes",
+    "coverage",
+    "overlap_score",
+    "matched_genes",
+    "missing_genes",
+]
+
+if signatures.empty:
+    display(Markdown("No marker signature matches were found."))
+else:
+    for cluster_id, cluster_table in signatures.groupby("cluster_id", sort=True):
+        display(Markdown(f"### Cluster {{cluster_id}}"))
+        display(
+            HTML(
+                cluster_table[display_columns]
+                .head(10)
+                .to_html(index=False, classes="scaudit-table cluster-signature-table", border=0)
+            )
+        )
 ```
 
 ## Differential Marker Table
 
 ```{{python}}
 import pandas as pd
+from IPython.display import HTML
 
-pd.read_csv("tables/differential_markers.csv").head(50)
+markers = pd.read_csv("tables/differential_markers.csv")
+HTML(markers.head(80).to_html(index=False, classes="scaudit-table", border=0))
 ```
 
 ## Publication Figures
