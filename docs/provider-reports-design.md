@@ -13,28 +13,35 @@ results/
   report/
     report.html
   evidence_reports/
+    provider_reports.json
+    comparison/
+      evidence_comparison.qmd
+      evidence_comparison.html
+      evidence_comparison.json
     marker_based/
       marker_based.qmd
       marker_based.html
       marker_based.evidence.json
-      figures/
-      tables/
-    reference_mapping/
-      reference_mapping.qmd
-      reference_mapping.html
-      reference_mapping.evidence.json
-    model_prediction/
-      celltypist.qmd
-      celltypist.html
-      celltypist.evidence.json
-    ontology_reasoning/
-      cell_ontology.qmd
-      cell_ontology.html
-      cell_ontology.evidence.json
-    llm_explanation/
-      llm_explanation.qmd
-      llm_explanation.html
-      llm_explanation.evidence.json
+    sctype/
+      sctype.qmd
+      sctype.html
+      sctype.evidence.json
+    sccatch/
+      sccatch.qmd
+      sccatch.html
+      sccatch.evidence.json
+    scsa/
+      scsa.qmd
+      scsa.html
+      scsa.evidence.json
+    cellmarker/
+      cellmarker.qmd
+      cellmarker.html
+      cellmarker.evidence.json
+    panglaodb/
+      panglaodb.qmd
+      panglaodb.html
+      panglaodb.evidence.json
 ```
 
 The main report should summarize status, top findings, agreement or disagreement, and links to provider reports. It should not combine all tool details into one long page.
@@ -44,10 +51,13 @@ Each provider report should answer one focused question:
 | Provider report | Focus |
 | --- | --- |
 | Marker-based evidence | Differential markers, marker strength, marker signatures, marker expression figures |
-| Reference-based mapping | External/local reference label matching and gene overlap |
-| Model-based prediction | CellTypist or other classifier predictions |
-| Ontology reasoning | Cell ontology mapping and hierarchy consistency |
-| LLM explanation | Human-readable interpretation generated from structured evidence |
+| ScType annotation evidence | Marker-set scoring with explicit marker database and tissue/cell-type scope |
+| scCATCH annotation evidence | Tissue-aware marker matching with explicit R package/database provenance |
+| SCSA annotation evidence | External marker-scoring tool results with command/function parameters |
+| CellMarker evidence | Curated CellMarker database support for cluster marker interpretation |
+| PanglaoDB evidence | Curated PanglaoDB marker support for cluster marker interpretation |
+
+Provider dependencies are managed through pixi environments and documented in [`provider-dependency-management.md`](provider-dependency-management.md). Each provider should record the pixi environment, package or database version, command/function, parameters, and skipped/warning state in its standard JSON.
 
 ## QMD Metadata Convention
 

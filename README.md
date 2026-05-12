@@ -176,4 +176,4 @@ pixi run scaudit --help
 
 See [`product-notes/`](product-notes/) for architecture decisions, roadmap, methods, and design philosophy.
 
-See [`docs/provider-reports-design.md`](docs/provider-reports-design.md) for the focused qmd provider report design, callout usage, and evidence JSON contract.
+See [`docs/provider-reports-design.md`](docs/provider-reports-design.md) for the focused qmd provider report design, callout usage, and evidence JSON contract. See [`docs/provider-dependency-management.md`](docs/provider-dependency-management.md) for the pixi environment strategy for Python, R-backed, and database-backed evidence providers.

@@ -19,9 +19,20 @@ jupyter = "*"
 nbformat = "*"
 ipykernel = "*"
 
+[feature.provider-r.dependencies]
+r-base = ">=4.3,<4.5"
+"r-data.table" = "*"
+r-dplyr = "*"
+r-jsonlite = "*"
+r-readr = "*"
+
 [pypi-dependencies]
 scaudit = { path = ".", editable = true }
 great-tables = "*"
+
+[environments]
+default = { solve-group = "default" }
+provider-r = { features = ["provider-r"], solve-group = "provider-r" }
 
 [tasks]
 scaudit = "scaudit"
