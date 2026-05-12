@@ -13,7 +13,11 @@ from scaudit import __version__
 from scaudit.config import load_config, write_default_config
 from scaudit.data import ClusterEvidence, compute_cluster_evidence, diagnose_dataset
 from scaudit.markers import write_marker_evidence_csv
-from scaudit.providers import render_marker_provider_report, render_reference_provider_report
+from scaudit.providers import (
+    render_external_annotation_provider_report,
+    render_marker_provider_report,
+    render_reference_provider_report,
+)
 from scaudit.providers.schema import write_json
 from scaudit.references import load_registry, registry_path
 from scaudit.report import render_draft_report, render_final_report
@@ -156,6 +160,30 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
             output_dir,
             evidence=evidence,
             reference_registry_path=ref_registry_path,
+            sample_key=sample_key,
+            batch_key=batch_key,
+        ),
+        render_external_annotation_provider_report(
+            "sctype",
+            dataset_path,
+            cluster_key,
+            output_dir,
+            sample_key=sample_key,
+            batch_key=batch_key,
+        ),
+        render_external_annotation_provider_report(
+            "sccatch",
+            dataset_path,
+            cluster_key,
+            output_dir,
+            sample_key=sample_key,
+            batch_key=batch_key,
+        ),
+        render_external_annotation_provider_report(
+            "scsa",
+            dataset_path,
+            cluster_key,
+            output_dir,
             sample_key=sample_key,
             batch_key=batch_key,
         ),

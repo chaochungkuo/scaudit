@@ -19,6 +19,7 @@ from scaudit.data import ClusterEvidence, MarkerGene, _fill_composition_evidence
 from scaudit.llm import OpenAICompatibleClient, enrich_cards_with_llm
 from scaudit.markers import attach_marker_evidence, marker_rows_from_rank_genes_groups
 from scaudit.providers.marker_based import write_marker_provider_outputs
+from scaudit.providers.external_annotation import write_external_annotation_provider_outputs
 from scaudit.providers.reference_mapping import write_reference_provider_outputs
 from scaudit.report import render_draft_report
 from scaudit.run import _assign_annotation, _llm_settings, build_annotation_cards
@@ -232,10 +233,20 @@ class CliTests(unittest.TestCase):
             self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.qmd").exists())
             self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.html").exists())
             self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.evidence.json").exists())
+            provider_index = json.loads((output_dir / "evidence_reports" / "provider_reports.json").read_text(encoding="utf-8"))
+            provider_ids = {provider["id"] for provider in provider_index["providers"]}
+            self.assertTrue({"marker_based", "reference_mapping", "sctype", "sccatch", "scsa"}.issubset(provider_ids))
+            for provider_id in ("sctype", "sccatch", "scsa"):
+                self.assertTrue((output_dir / "evidence_reports" / provider_id / f"{provider_id}.qmd").exists())
+                self.assertTrue((output_dir / "evidence_reports" / provider_id / f"{provider_id}.html").exists())
+                self.assertTrue((output_dir / "evidence_reports" / provider_id / f"{provider_id}.evidence.json").exists())
             report_html = (output_dir / "report" / "report.html").read_text(encoding="utf-8")
             self.assertIn("Focused evidence reports", report_html)
             self.assertIn("../evidence_reports/marker_based/marker_based.html", report_html)
             self.assertIn("../evidence_reports/reference_mapping/reference_mapping.html", report_html)
+            self.assertIn("../evidence_reports/sctype/sctype.html", report_html)
+            self.assertIn("../evidence_reports/sccatch/sccatch.html", report_html)
+            self.assertIn("../evidence_reports/scsa/scsa.html", report_html)
 
     def test_marker_provider_writes_standard_json_and_qmd_callouts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -310,6 +321,22 @@ class CliTests(unittest.TestCase):
             self.assertEqual(evidence_json["schema_version"], "0.1.0")
             self.assertTrue((temp_path / "reference_mapping" / "tables" / "reference_matches.csv").exists())
             callouts = (temp_path / "reference_mapping" / "callouts.md").read_text(encoding="utf-8")
+            self.assertIn("callout-note", callouts)
+            self.assertIn("callout-warning", callouts)
+
+    def test_external_annotation_provider_writes_skipped_report_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            payload = write_external_annotation_provider_outputs("sctype", temp_path / "input.h5ad", "leiden", temp_path / "sctype")
+
+            self.assertEqual(payload["provider"]["id"], "sctype")
+            self.assertEqual(payload["run"]["status"], "skipped")
+            self.assertEqual(payload["results"]["summary"]["n_predictions"], 0)
+            self.assertTrue((temp_path / "sctype" / "tables" / "provider_status.csv").exists())
+            self.assertTrue((temp_path / "sctype" / "tables" / "cluster_predictions.csv").exists())
+            status = (temp_path / "sctype" / "tables" / "provider_status.csv").read_text(encoding="utf-8")
+            self.assertIn("Execution adapter is not implemented yet", status)
+            callouts = (temp_path / "sctype" / "callouts.md").read_text(encoding="utf-8")
             self.assertIn("callout-note", callouts)
             self.assertIn("callout-warning", callouts)
 
