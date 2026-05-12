@@ -493,8 +493,9 @@ subtitle: "Differential markers, marker signatures, and expression visualization
 format:
   html:
     toc: true
+    code-tools: true
     code-fold: true
-    code-summary: "Show analysis code"
+    code-summary: "Show/hide analysis code"
     embed-resources: false
 execute:
   echo: true
@@ -522,6 +523,27 @@ params:
   strong_log2fc: 1.0
   strong_padj: 0.01
 ---
+
+<style>
+details.code-fold > summary {{
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #8da2c0;
+  border-radius: 6px;
+  padding: 0.25rem 0.65rem;
+  margin: 0.35rem 0;
+  background: #f4f7fb;
+  color: #18324a;
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+}}
+
+details.code-fold[open] > summary {{
+  background: #e8eef8;
+}}
+</style>
 
 ## Question
 
