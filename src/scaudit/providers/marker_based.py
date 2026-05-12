@@ -111,6 +111,8 @@ def write_marker_provider_outputs(
     callout_path.write_text(_callout_markdown(warnings, strength_rows, signature_rows), encoding="utf-8")
     signature_tabs_path = output_dir / "cluster_signature_tabs.md"
     signature_tabs_path.write_text(_signature_tabs_markdown(signature_rows), encoding="utf-8")
+    marker_tabs_path = output_dir / "cluster_marker_tabs.md"
+    marker_tabs_path.write_text(_marker_tabs_markdown(marker_rows), encoding="utf-8")
 
     payload = {
         "schema_version": "0.1.0",
@@ -557,6 +559,43 @@ def _signature_tabs_markdown(signature_rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _marker_tabs_markdown(marker_rows: list[dict[str, Any]]) -> str:
+    if not marker_rows:
+        return "No differential markers were found.\n"
+
+    clusters = sorted({str(row["cluster_id"]) for row in marker_rows})
+    lines = ["::: {.panel-tabset}", ""]
+    for cluster in clusters:
+        rows = [row for row in marker_rows if str(row["cluster_id"]) == cluster]
+        rows.sort(key=lambda row: int(row.get("rank") or 9999))
+        lines.append(f"## Cluster {html.escape(cluster)}")
+        lines.append("")
+        lines.append(_marker_summary_table(rows[:50]))
+        lines.append("")
+    lines.append(":::")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _marker_summary_table(rows: list[dict[str, Any]]) -> str:
+    headers = ["Rank", "Gene", "Score", "log2FC", "Adjusted p-value", "Strength"]
+    body = []
+    for row in rows:
+        body.append(
+            "<tr>"
+            f"<td>{html.escape(str(row.get('rank', '')))}</td>"
+            f"<td>{html.escape(str(row.get('gene', '')))}</td>"
+            f"<td>{_format_decimal(row.get('score'))}</td>"
+            f"<td>{_format_decimal(row.get('log2fc'))}</td>"
+            f"<td>{_format_pvalue(row.get('pval_adj'))}</td>"
+            f"<td>{html.escape(str(row.get('strength', '')))}</td>"
+            "</tr>"
+        )
+    head_html = "".join(f"<th>{header}</th>" for header in headers)
+    body_html = "".join(body)
+    return f'<table class="scaudit-table cluster-marker-table"><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>'
+
+
 def _signature_summary_table(rows: list[dict[str, Any]]) -> str:
     headers = ["Rank", "Label", "Matched", "Signature genes", "Coverage", "Overlap"]
     body = []
@@ -604,6 +643,16 @@ def _format_decimal(value: Any) -> str:
         return f"{float(value):.2f}"
     except (TypeError, ValueError):
         return html.escape(str(value or ""))
+
+
+def _format_pvalue(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return html.escape(str(value or ""))
+    if number != 0 and abs(number) < 0.01:
+        return f"{number:.2e}"
+    return f"{number:.2f}"
 
 
 def _write_marker_qmd(qmd_path: Path, dataset_path: Path, cluster_key: str, provider_dir: Path, *, n_top_genes: int) -> None:
@@ -685,6 +734,10 @@ details.code-fold[open] > summary {{
 }}
 
 .cluster-signature-table {{
+  margin-bottom: 1.2rem;
+}}
+
+.cluster-marker-table {{
   margin-bottom: 1.2rem;
 }}
 
@@ -815,13 +868,9 @@ Full matched and missing gene lists are available in `tables/marker_signatures.c
 
 ## Differential Marker Table
 
-```{{python}}
-import pandas as pd
-from IPython.display import HTML
+The table below shows up to 50 markers per cluster. Score and log2FC are rounded to 2 decimal places for readability; very small adjusted p-values use scientific notation. Full-precision values are available in `tables/differential_markers.csv` and `marker_based.evidence.json`.
 
-markers = pd.read_csv("tables/differential_markers.csv")
-HTML(markers.head(80).to_html(index=False, classes="scaudit-table", border=0))
-```
+{{{{< include cluster_marker_tabs.md >}}}}
 
 ## Publication Figures
 

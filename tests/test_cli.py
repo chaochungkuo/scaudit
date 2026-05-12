@@ -227,6 +227,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("marker-signature-workspace", marker_qmd)
             self.assertIn("figures/cluster_umap.png", marker_qmd)
             self.assertIn("cluster_signature_tabs.md", marker_qmd)
+            self.assertIn("cluster_marker_tabs.md", marker_qmd)
             self.assertIn("Signature scoring uses `scaudit.markers.MARKER_DB`", marker_qmd)
             self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.qmd").exists())
             self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.html").exists())
@@ -271,6 +272,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(evidence_json["schema_version"], "0.1.0")
             self.assertTrue((temp_path / "marker_based" / "tables" / "differential_markers.csv").exists())
             self.assertTrue((temp_path / "marker_based" / "cluster_signature_tabs.md").exists())
+            self.assertTrue((temp_path / "marker_based" / "cluster_marker_tabs.md").exists())
             callouts = (temp_path / "marker_based" / "callouts.md").read_text(encoding="utf-8")
             self.assertNotIn("callout-note", callouts)
             self.assertNotIn("callout-important", callouts)
@@ -279,6 +281,12 @@ class CliTests(unittest.TestCase):
             self.assertIn("## Cluster 0", signature_tabs)
             self.assertNotIn("<th>source</th>", signature_tabs)
             self.assertNotIn("<th>tool</th>", signature_tabs)
+            marker_tabs = (temp_path / "marker_based" / "cluster_marker_tabs.md").read_text(encoding="utf-8")
+            self.assertIn("## Cluster 0", marker_tabs)
+            self.assertIn("<th>Adjusted p-value</th>", marker_tabs)
+            self.assertIn("<td>8.00</td>", marker_tabs)
+            self.assertIn("<td>1.00e-03</td>", marker_tabs)
+            self.assertNotIn("<th></th>", marker_tabs)
 
     def test_reference_provider_writes_standard_json_and_missing_reference_callout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
