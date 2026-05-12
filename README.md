@@ -17,7 +17,7 @@ scaudit turns cluster annotation into structured evidence records, confidence ca
 
 **Core thesis**: annotation = Evidence + Reasoning + Decision.
 
-Current status: early MVP development. The current vertical slice supports `.h5ad` diagnosis, config validation, run planning, marker evidence generation, builtin marker matching, optional model/LLM evidence, draft annotation cards, review tables, reproducibility records, and static HTML reports.
+Current status: transparent provider-report MVP development. The current vertical slice supports `.h5ad` diagnosis, config validation, run planning, marker evidence generation, builtin marker matching, optional model/LLM evidence, draft annotation cards, review tables, reproducibility records, static HTML reports, and focused qmd provider reports for method-level auditability.
 
 ---
 
@@ -56,9 +56,13 @@ results/
 ├── annotation_summary.csv    # Summary table
 ├── review_table.csv          # Editable human-review worksheet
 ├── reproducibility.json      # Versions, hashes, environment
-└── report/
-    ├── report.html           # Interactive audit report (Plotly UMAP)
-    └── review.html           # In-browser review table with CSV download
+├── report/
+│   ├── report.html           # Interactive audit report (Plotly UMAP)
+│   └── review.html           # In-browser review table with CSV download
+└── evidence_reports/
+    ├── provider_reports.json # Main-report index of focused provider reports
+    ├── marker_based/         # qmd/html/json/tables/figures for marker evidence
+    └── reference_mapping/    # qmd/html/json/tables for external reference mapping
 ```
 
 ## Evidence sources (per cluster)
@@ -141,13 +145,17 @@ For one-command runs, `scaudit annotate ...` enables LLM summaries by default wh
 
 ## Roadmap
 
-Near-term development is focused on completing a public-dataset end-to-end run:
+Near-term development is focused on transparent evidence providers and public-dataset validation:
 
-1. Run the current workflow on a small public `.h5ad`, such as PBMC3k.
-2. Harden marker evidence on real clustered data.
-3. Add a conservative decision engine for `Accepted`, `Ambiguous`, `Unknown`, `Needs review`, and `Artifact warning`.
-4. Add model or reference evidence so marker evidence can be compared against an independent source.
-5. Finalize draft annotations through review import and final report generation.
+| Stage | Status | Scope |
+| --- | --- | --- |
+| Public PBMC3k end-to-end run | ✅ implemented | `examples/pbmc3k/run.sh` exercises diagnosis, annotation, review import, and finalize. |
+| Marker-based provider report | ✅ implemented | Focused qmd/html/json provider report with marker tables, signature scoring, and publication figure exports. |
+| Reference-mapping provider report | ✅ implemented | Focused qmd/html/json provider report for external reference matches and reference metadata; warns when no external reference is selected. |
+| Conservative decision engine | 🚧 MVP implemented | Current labels use heuristic evidence agreement; next step is provider-JSON-driven decision logic. |
+| Model-prediction provider report | ⏳ planned | CellTypist qmd/html/json report with model metadata, majority-vote parameters, and prediction confidence. |
+| Ontology reasoning | ⏳ planned | Cell Ontology mapping and hierarchy consistency checks. |
+| LLM explanation provider report | ⏳ planned | Explain-only qmd/html/json report with model metadata and evidence payload provenance. |
 
 ## Development
 

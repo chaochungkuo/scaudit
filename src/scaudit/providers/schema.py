@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import os
 import platform
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -32,3 +35,33 @@ def relative_to(path: Path, root: Path) -> str:
         return str(path.relative_to(root))
     except ValueError:
         return str(path)
+
+
+def render_qmd(qmd_path: Path) -> tuple[Path | None, str]:
+    quarto = shutil.which("quarto")
+    if not quarto:
+        return None, "Quarto was not available; wrote a fallback HTML provider report."
+    source_dir = str(Path(__file__).resolve().parents[2])
+    env = dict(os.environ)
+    env["PYTHONPATH"] = source_dir + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    try:
+        completed = subprocess.run(
+            [quarto, "render", str(qmd_path), "--to", "html"],
+            cwd=qmd_path.parent,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+    except subprocess.CalledProcessError as exc:
+        message = (exc.stderr or exc.stdout or "Quarto render failed.").strip().splitlines()
+        detail = message[-1] if message else "Quarto render failed."
+        return None, f"Quarto render failed; wrote a fallback HTML provider report. Detail: {detail}"
+    except Exception as exc:
+        return None, f"Quarto render failed; wrote a fallback HTML provider report. Detail: {exc}"
+    html_path = qmd_path.with_suffix(".html")
+    if html_path.exists():
+        return html_path, ""
+    detail = (completed.stderr or completed.stdout or "Quarto did not write HTML.").strip().splitlines()
+    return None, detail[-1] if detail else "Quarto did not write HTML."

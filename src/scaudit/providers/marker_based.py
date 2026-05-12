@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import csv
 import math
-import os
-import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from scaudit import __version__
 from scaudit.data import ClusterEvidence, compute_cluster_evidence
-from scaudit.providers.schema import package_versions, relative_to, utc_now, write_json
+from scaudit.providers.schema import package_versions, relative_to, render_qmd, utc_now, write_json
 
 
 MARKER_PROVIDER_ID = "marker_based"
@@ -56,7 +53,7 @@ def render_marker_provider_report(
     )
     qmd_path = provider_dir / "marker_based.qmd"
     _write_marker_qmd(qmd_path, dataset_path, cluster_key, provider_dir, n_top_genes=n_top_genes)
-    html_path, render_warning = _render_qmd(qmd_path)
+    html_path, render_warning = render_qmd(qmd_path)
     if html_path is None:
         html_path = provider_dir / "marker_based.html"
         _write_fallback_html(html_path, payload)
@@ -625,36 +622,6 @@ pd.read_csv("tables/differential_markers.csv").head(50)
 The machine-readable provider output is `marker_based.evidence.json`. Figure source tables are stored under `tables/`, and publication figure exports are stored under `figures/`.
 """
     qmd_path.write_text(text, encoding="utf-8")
-
-
-def _render_qmd(qmd_path: Path) -> tuple[Path | None, str]:
-    quarto = shutil.which("quarto")
-    if not quarto:
-        return None, "Quarto was not available; wrote a fallback HTML provider report."
-    source_dir = str(Path(__file__).resolve().parents[2])
-    env = dict(os.environ)
-    env["PYTHONPATH"] = source_dir + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    try:
-        completed = subprocess.run(
-            [quarto, "render", str(qmd_path), "--to", "html"],
-            cwd=qmd_path.parent,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-        )
-    except subprocess.CalledProcessError as exc:
-        message = (exc.stderr or exc.stdout or "Quarto render failed.").strip().splitlines()
-        detail = message[-1] if message else "Quarto render failed."
-        return None, f"Quarto render failed; wrote a fallback HTML provider report. Detail: {detail}"
-    except Exception as exc:
-        return None, f"Quarto render failed; wrote a fallback HTML provider report. Detail: {exc}"
-    html_path = qmd_path.with_suffix(".html")
-    if html_path.exists():
-        return html_path, ""
-    detail = (completed.stderr or completed.stdout or "Quarto did not write marker_based.html.").strip().splitlines()
-    return None, detail[-1] if detail else "Quarto did not write marker_based.html."
 
 
 def _write_fallback_html(path: Path, payload: dict[str, Any]) -> None:

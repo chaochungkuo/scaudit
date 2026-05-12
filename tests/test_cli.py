@@ -19,6 +19,7 @@ from scaudit.data import ClusterEvidence, MarkerGene, _fill_composition_evidence
 from scaudit.llm import OpenAICompatibleClient, enrich_cards_with_llm
 from scaudit.markers import attach_marker_evidence, marker_rows_from_rank_genes_groups
 from scaudit.providers.marker_based import write_marker_provider_outputs
+from scaudit.providers.reference_mapping import write_reference_provider_outputs
 from scaudit.report import render_draft_report
 from scaudit.run import _assign_annotation, _llm_settings, build_annotation_cards
 
@@ -221,9 +222,13 @@ class CliTests(unittest.TestCase):
             self.assertTrue((output_dir / "evidence_reports" / "marker_based" / "marker_based.qmd").exists())
             self.assertTrue((output_dir / "evidence_reports" / "marker_based" / "marker_based.html").exists())
             self.assertTrue((output_dir / "evidence_reports" / "marker_based" / "marker_based.evidence.json").exists())
+            self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.qmd").exists())
+            self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.html").exists())
+            self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.evidence.json").exists())
             report_html = (output_dir / "report" / "report.html").read_text(encoding="utf-8")
             self.assertIn("Focused evidence reports", report_html)
             self.assertIn("../evidence_reports/marker_based/marker_based.html", report_html)
+            self.assertIn("../evidence_reports/reference_mapping/reference_mapping.html", report_html)
 
     def test_marker_provider_writes_standard_json_and_qmd_callouts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -262,6 +267,31 @@ class CliTests(unittest.TestCase):
             callouts = (temp_path / "marker_based" / "callouts.md").read_text(encoding="utf-8")
             self.assertIn("callout-note", callouts)
             self.assertIn("callout-important", callouts)
+
+    def test_reference_provider_writes_standard_json_and_missing_reference_callout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            evidence = {
+                "0": ClusterEvidence(
+                    "0",
+                    reference_matches=[
+                        {"ref_id": "builtin", "label": "T cell", "jaccard": 0.2, "n_shared": 4},
+                        {"ref_id": "pbmc_ref", "label": "CD4 T cell", "jaccard": 0.18, "n_shared": 6},
+                    ],
+                )
+            }
+
+            payload = write_reference_provider_outputs(temp_path / "input.h5ad", "leiden", temp_path / "reference_mapping", evidence=evidence)
+
+            self.assertEqual(payload["provider"]["id"], "reference_mapping")
+            self.assertEqual(payload["methods"][2]["formula"], "Jaccard(query cluster marker genes, reference label marker genes)")
+            self.assertEqual(payload["results"]["summary"]["n_matches"], 1)
+            evidence_json = json.loads((temp_path / "reference_mapping" / "reference_mapping.evidence.json").read_text(encoding="utf-8"))
+            self.assertEqual(evidence_json["schema_version"], "0.1.0")
+            self.assertTrue((temp_path / "reference_mapping" / "tables" / "reference_matches.csv").exists())
+            callouts = (temp_path / "reference_mapping" / "callouts.md").read_text(encoding="utf-8")
+            self.assertIn("callout-note", callouts)
+            self.assertIn("callout-warning", callouts)
 
     def test_build_annotation_cards_from_cluster_sizes(self) -> None:
         cards = build_annotation_cards({"cluster_sizes": {"0": 10, "1": 12}})
