@@ -13,11 +13,13 @@ examples/pbmc3k/results/review_table.csv
 examples/pbmc3k/results/reproducibility.json
 examples/pbmc3k/results/report/report.html
 examples/pbmc3k/results/report/review.html
-examples/pbmc3k/final/final_annotation_cards.json
-examples/pbmc3k/final/final_annotation_summary.csv
-examples/pbmc3k/final/review_audit.json
-examples/pbmc3k/final/reproducibility.json
-examples/pbmc3k/final/report/report.html
+examples/pbmc3k/results/reviewed_review_table.csv
+examples/pbmc3k/results/review_audit.json
+examples/pbmc3k/results/evidence_reports/provider_reports.json
+examples/pbmc3k/results/evidence_reports/marker_based/marker_based.html
+examples/pbmc3k/results/evidence_reports/marker_based/marker_based.evidence.json
+examples/pbmc3k/results/evidence_reports/reference_mapping/reference_mapping.html
+examples/pbmc3k/results/evidence_reports/reference_mapping/reference_mapping.evidence.json
 ```
 
 Minimum content checks:
@@ -28,3 +30,4 @@ Minimum content checks:
 - At least one annotation card has non-empty `evidence.markers`.
 - `report/report.html` contains `scaudit report`.
 - `report/report.html` contains UMAP tabs for clusters, confidence, and samples.
+- `evidence_reports/provider_reports.json` lists the focused provider reports.

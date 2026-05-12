@@ -544,8 +544,8 @@ def review(args: Sequence[str]) -> None:
         print()
         print_bullets("Warnings", result.warnings)
     print()
-    print("Next:")
-    print(f"  scaudit finalize {result.run_dir} --out final/")
+    print("Optional finalization:")
+    print(f"  scaudit finalize {result.run_dir} --out finalized/")
 
 
 def reference(args: Sequence[str]) -> None:
@@ -745,7 +745,7 @@ def _print_help() -> None:
     print("  scaudit reference add my_ref.h5ad --id my_ref --species mouse --tissue heart --label-key cell_type")
     print("  scaudit reference list")
     print("  scaudit reference use my_ref --config config.toml")
-    print("  scaudit finalize results/ --out final/ [--write-h5ad]")
+    print("  scaudit finalize results/ --out finalized/ [--write-h5ad]")
     print()
     print("Commands:")
     print("  annotate     Full annotation audit from h5ad in one command")

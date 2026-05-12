@@ -5,13 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 EXAMPLE_DIR="$ROOT_DIR/examples/pbmc3k"
 DATA_DIR="$EXAMPLE_DIR/data"
 RESULTS_DIR="$EXAMPLE_DIR/results"
-FINAL_DIR="$EXAMPLE_DIR/final"
 DATASET_PATH="$DATA_DIR/pbmc3k_scaudit.h5ad"
 
 mkdir -p "$DATA_DIR"
-rm -rf "$RESULTS_DIR" "$FINAL_DIR"
+rm -rf "$RESULTS_DIR"
 
-echo "[1/4] Preparing PBMC3k dataset"
+echo "[1/3] Preparing PBMC3k dataset"
 python - "$DATASET_PATH" <<'PY'
 from __future__ import annotations
 
@@ -56,7 +55,7 @@ adata.write_h5ad(out_path)
 print(out_path)
 PY
 
-echo "[2/4] Running scaudit annotate"
+echo "[2/3] Running scaudit annotate"
 PYTHONPATH="$ROOT_DIR/src" python -m scaudit annotate "$DATASET_PATH" \
   --cluster-key scaudit_cluster \
   --species human \
@@ -65,12 +64,10 @@ PYTHONPATH="$ROOT_DIR/src" python -m scaudit annotate "$DATASET_PATH" \
   --out "$RESULTS_DIR" \
   --no-llm
 
-echo "[3/4] Importing review table"
+echo "[3/3] Importing review table"
 PYTHONPATH="$ROOT_DIR/src" python -m scaudit review import "$RESULTS_DIR/review_table.csv" --run "$RESULTS_DIR"
 
-echo "[4/4] Finalizing"
-PYTHONPATH="$ROOT_DIR/src" python -m scaudit finalize "$RESULTS_DIR" --out "$FINAL_DIR"
-
 echo
-echo "PBMC3k E2E complete"
+echo "PBMC3k working result set complete"
 echo "Report: $RESULTS_DIR/report/report.html"
+echo "Focused reports: $RESULTS_DIR/evidence_reports/"

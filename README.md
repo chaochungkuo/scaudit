@@ -100,7 +100,7 @@ scaudit run config.toml
 scaudit review import results/review_table.csv --run results/
 
 # 3. Finalize
-scaudit finalize results/ --out final/
+scaudit finalize results/ --out finalized/
 
 # Reference management
 scaudit reference add ref.h5ad \

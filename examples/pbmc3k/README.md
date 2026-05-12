@@ -5,15 +5,16 @@ This example is the first public-dataset gate for scaudit.
 It downloads the public Scanpy PBMC3k dataset, prepares a small clustered `.h5ad`, then runs:
 
 ```text
-annotate -> review import -> finalize
+annotate -> review import
 ```
+
+The example keeps one working result set in `examples/pbmc3k/results/` so report tuning has a single canonical output location.
 
 The generated data and outputs are intentionally ignored by git:
 
 ```text
 examples/pbmc3k/data/
 examples/pbmc3k/results/
-examples/pbmc3k/final/
 ```
 
 ## Requirements
@@ -43,8 +44,7 @@ examples/pbmc3k/results/report/review.html
 examples/pbmc3k/results/annotation_cards.json
 examples/pbmc3k/results/marker_evidence.csv
 examples/pbmc3k/results/review_table.csv
-examples/pbmc3k/final/final_annotation_cards.json
-examples/pbmc3k/final/final_annotation_summary.csv
+examples/pbmc3k/results/evidence_reports/
 ```
 
 ## What this gate validates
@@ -54,7 +54,8 @@ examples/pbmc3k/final/final_annotation_summary.csv
 - Scanpy marker evidence populates `marker_evidence.csv`.
 - Annotation cards contain non-empty marker evidence.
 - The static HTML report is generated.
-- Review import and finalize run without manual edits.
+- Focused provider reports are generated under `results/evidence_reports/`.
+- Review import runs without manual edits.
 
 ## Current limitations
 
