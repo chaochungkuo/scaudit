@@ -240,6 +240,10 @@ class CliTests(unittest.TestCase):
                 self.assertTrue((output_dir / "evidence_reports" / provider_id / f"{provider_id}.qmd").exists())
                 self.assertTrue((output_dir / "evidence_reports" / provider_id / f"{provider_id}.html").exists())
                 self.assertTrue((output_dir / "evidence_reports" / provider_id / f"{provider_id}.evidence.json").exists())
+                provider_payload = json.loads(
+                    (output_dir / "evidence_reports" / provider_id / f"{provider_id}.evidence.json").read_text(encoding="utf-8")
+                )
+                self.assertIn(provider_payload["run"]["status"], {"success", "warning"})
             report_html = (output_dir / "report" / "report.html").read_text(encoding="utf-8")
             self.assertIn("Focused evidence reports", report_html)
             self.assertIn("../evidence_reports/marker_based/marker_based.html", report_html)
@@ -324,18 +328,33 @@ class CliTests(unittest.TestCase):
             self.assertIn("callout-note", callouts)
             self.assertIn("callout-warning", callouts)
 
-    def test_external_annotation_provider_writes_skipped_report_contract(self) -> None:
+    def test_external_annotation_provider_writes_predictions(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            payload = write_external_annotation_provider_outputs("sctype", temp_path / "input.h5ad", "leiden", temp_path / "sctype")
+            evidence = {
+                "0": ClusterEvidence(
+                    "0",
+                    markers=[
+                        MarkerGene("CD3D", 8.0, 1.6, 0.001),
+                        MarkerGene("CD3E", 7.0, 1.4, 0.001),
+                        MarkerGene("TRAC", 6.5, 1.2, 0.001),
+                    ],
+                )
+            }
+            payload = write_external_annotation_provider_outputs(
+                "sctype", temp_path / "input.h5ad", "leiden", temp_path / "sctype", evidence=evidence
+            )
 
             self.assertEqual(payload["provider"]["id"], "sctype")
-            self.assertEqual(payload["run"]["status"], "skipped")
-            self.assertEqual(payload["results"]["summary"]["n_predictions"], 0)
+            self.assertEqual(payload["run"]["status"], "success")
+            self.assertGreater(payload["results"]["summary"]["n_predictions"], 0)
             self.assertTrue((temp_path / "sctype" / "tables" / "provider_status.csv").exists())
             self.assertTrue((temp_path / "sctype" / "tables" / "cluster_predictions.csv").exists())
             status = (temp_path / "sctype" / "tables" / "provider_status.csv").read_text(encoding="utf-8")
-            self.assertIn("Execution adapter is not implemented yet", status)
+            self.assertIn("Computed standardized cluster predictions", status)
+            predictions = (temp_path / "sctype" / "tables" / "cluster_predictions.csv").read_text(encoding="utf-8")
+            self.assertIn("T cell", predictions)
+            self.assertIn("CD3D", predictions)
             callouts = (temp_path / "sctype" / "callouts.md").read_text(encoding="utf-8")
             self.assertIn("callout-note", callouts)
             self.assertIn("callout-warning", callouts)

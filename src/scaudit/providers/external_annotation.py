@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import csv
 import html
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from scaudit import __version__
+from scaudit.data import ClusterEvidence, compute_cluster_evidence
+from scaudit.markers import MARKER_DB
 from scaudit.providers.schema import package_versions, relative_to, render_qmd, utc_now, write_json
 
 
@@ -34,10 +37,10 @@ PROVIDERS = {
         subtitle="Marker-set scoring with explicit marker database and tissue scope",
         evidence_layer="ScType annotation evidence",
         purpose="Marker-set scoring",
-        tool="ScType R workflow",
-        execution_environment="pixi run --environment provider-r",
-        dependency_plan="R-backed provider. Run in the provider-r pixi environment and record the exact ScType script/database revision.",
-        method_summary="Score cluster marker sets against ScType marker signatures, then report candidate labels and matched markers per cluster.",
+        tool="scaudit ScType-style marker scoring adapter",
+        execution_environment="pixi default environment",
+        dependency_plan="Executable scaudit-native adapter. It uses the same standard cluster marker table and builtin marker signatures while the official ScType script/database source is not pinned.",
+        method_summary="Score cluster marker sets against marker signatures using coverage and rank-weighted marker support, then report candidate labels and matched markers per cluster.",
         result_file="sctype.evidence.json",
     ),
     "sccatch": ExternalAnnotationProvider(
@@ -46,10 +49,10 @@ PROVIDERS = {
         subtitle="Tissue-aware marker matching with explicit R package and database provenance",
         evidence_layer="scCATCH annotation evidence",
         purpose="Tissue-aware marker matching",
-        tool="scCATCH R package/workflow",
-        execution_environment="pixi run --environment provider-r",
-        dependency_plan="R-backed provider. Add the exact maintained scCATCH package source before enabling execution.",
-        method_summary="Use tissue-aware marker matching to compare cluster marker sets against scCATCH references.",
+        tool="scaudit scCATCH-style tissue-aware marker adapter",
+        execution_environment="pixi default environment",
+        dependency_plan="Executable scaudit-native adapter. Add the exact maintained scCATCH R package/database source later to replace this adapter.",
+        method_summary="Compare cluster marker sets against marker references with tissue metadata recorded in the run payload.",
         result_file="sccatch.evidence.json",
     ),
     "scsa": ExternalAnnotationProvider(
@@ -58,17 +61,29 @@ PROVIDERS = {
         subtitle="External marker-scoring tool results with command and database provenance",
         evidence_layer="SCSA annotation evidence",
         purpose="External marker-scoring inference",
-        tool="SCSA",
-        execution_environment="pixi default environment or a future scsa provider feature",
-        dependency_plan="External-tool provider. Select and pin a maintained SCSA CLI/package source before enabling execution.",
-        method_summary="Run SCSA on differential marker tables and collect cluster-level labels, scores, and database support.",
+        tool="scaudit SCSA-style marker scoring adapter",
+        execution_environment="pixi default environment",
+        dependency_plan="Executable scaudit-native adapter. Select and pin a maintained SCSA CLI/package source later if exact SCSA execution is required.",
+        method_summary="Run a weighted marker-set scoring pass over differential marker tables and collect cluster-level labels, scores, and database support.",
         result_file="scsa.evidence.json",
     ),
 }
 
 
 STATUS_FIELDS = ["provider_id", "status", "tool", "execution_environment", "reason"]
-PREDICTION_FIELDS = ["cluster_id", "rank", "label", "score", "confidence", "matched_markers", "source"]
+PREDICTION_FIELDS = [
+    "cluster_id",
+    "rank",
+    "label",
+    "score",
+    "confidence",
+    "matched_markers",
+    "n_matched",
+    "n_signature_genes",
+    "coverage",
+    "jaccard",
+    "source",
+]
 
 
 def render_external_annotation_provider_report(
@@ -77,6 +92,9 @@ def render_external_annotation_provider_report(
     cluster_key: str,
     output_dir: Path,
     *,
+    evidence: dict[str, ClusterEvidence] | None = None,
+    species: str = "",
+    tissue: str = "",
     sample_key: str = "",
     batch_key: str = "",
 ) -> dict[str, Any]:
@@ -88,12 +106,25 @@ def render_external_annotation_provider_report(
         dataset_path,
         cluster_key,
         provider_dir,
+        evidence=evidence,
+        species=species,
+        tissue=tissue,
         sample_key=sample_key,
         batch_key=batch_key,
         started_at=started_at,
     )
     qmd_path = provider_dir / f"{spec.provider_id}.qmd"
-    _write_provider_qmd(qmd_path, spec, dataset_path, cluster_key, provider_dir, sample_key=sample_key, batch_key=batch_key)
+    _write_provider_qmd(
+        qmd_path,
+        spec,
+        dataset_path,
+        cluster_key,
+        provider_dir,
+        species=species,
+        tissue=tissue,
+        sample_key=sample_key,
+        batch_key=batch_key,
+    )
     html_path, render_warning = render_qmd(qmd_path)
     if html_path is None:
         html_path = provider_dir / f"{spec.provider_id}.html"
@@ -112,6 +143,9 @@ def write_external_annotation_provider_outputs(
     cluster_key: str,
     output_dir: Path,
     *,
+    evidence: dict[str, ClusterEvidence] | None = None,
+    species: str = "",
+    tissue: str = "",
     sample_key: str = "",
     batch_key: str = "",
     started_at: str | None = None,
@@ -122,18 +156,26 @@ def write_external_annotation_provider_outputs(
     tables_dir.mkdir(parents=True, exist_ok=True)
 
     started_at = started_at or utc_now()
-    reason = "Execution adapter is not implemented yet; no external annotation tool was run."
-    warnings = [reason]
+    warnings: list[str] = []
+    if evidence is None:
+        evidence = compute_cluster_evidence(dataset_path, cluster_key, sample_key=sample_key, batch_key=batch_key)
+    if not evidence:
+        warnings.append("No cluster marker evidence was available; provider predictions could not be computed.")
+    warnings.append(
+        "Using the executable scaudit-native adapter for this provider; exact official package/script execution is not pinned yet."
+    )
+    prediction_rows = _prediction_rows(spec, evidence or {})
+    status = "success" if prediction_rows else "warning"
+    reason = "Computed standardized cluster predictions with the scaudit-native adapter." if prediction_rows else warnings[0]
     status_rows = [
         {
             "provider_id": spec.provider_id,
-            "status": "skipped",
+            "status": status,
             "tool": spec.tool,
             "execution_environment": spec.execution_environment,
             "reason": reason,
         }
     ]
-    prediction_rows: list[dict[str, Any]] = []
     _write_csv(tables_dir / "provider_status.csv", status_rows, STATUS_FIELDS)
     _write_csv(tables_dir / "cluster_predictions.csv", prediction_rows, PREDICTION_FIELDS)
     callout_path = output_dir / "callouts.md"
@@ -148,11 +190,13 @@ def write_external_annotation_provider_outputs(
             "purpose": spec.purpose,
         },
         "run": {
-            "status": "skipped",
+            "status": status,
             "started_at": started_at,
             "completed_at": utc_now(),
             "input_h5ad": str(dataset_path),
             "cluster_key": cluster_key,
+            "species": species,
+            "tissue": tissue,
             "sample_key": sample_key,
             "batch_key": batch_key,
             "execution_environment": spec.execution_environment,
@@ -168,8 +212,9 @@ def write_external_annotation_provider_outputs(
             {
                 "step": "External annotation",
                 "tool": spec.tool,
-                "status": "not_implemented",
+                "status": "executed",
                 "summary": spec.method_summary,
+                "parameters": _scoring_parameters(spec, species=species, tissue=tissue),
             },
             {
                 "step": "Standardization",
@@ -183,18 +228,123 @@ def write_external_annotation_provider_outputs(
             "tables": ["tables/provider_status.csv", "tables/cluster_predictions.csv"],
         },
         "results": {
-            "summary": {
-                "n_clusters_with_predictions": 0,
-                "n_predictions": 0,
-                "top_finding": f"{spec.title} is scaffolded but skipped until its execution adapter is implemented.",
-            },
-            "clusters": {},
+            "summary": _summary(spec, prediction_rows),
+            "clusters": _cluster_results(prediction_rows),
         },
         "warnings": warnings,
         "scaudit_version": __version__,
     }
     write_json(output_dir / spec.result_file, payload)
     return payload
+
+
+def _prediction_rows(spec: ExternalAnnotationProvider, evidence: dict[str, ClusterEvidence]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for cluster_id, ev in sorted(evidence.items(), key=lambda item: str(item[0])):
+        markers = [marker for marker in ev.markers if marker.gene]
+        if not markers:
+            continue
+        scored = _score_marker_sets(spec, markers)
+        for rank, item in enumerate(scored[:5], start=1):
+            rows.append(
+                {
+                    "cluster_id": str(cluster_id),
+                    "rank": rank,
+                    "label": item["label"],
+                    "score": f"{item['score']:.3f}",
+                    "confidence": _confidence(item["score"]),
+                    "matched_markers": ", ".join(item["matched_markers"]),
+                    "n_matched": item["n_matched"],
+                    "n_signature_genes": item["n_signature_genes"],
+                    "coverage": f"{item['coverage']:.3f}",
+                    "jaccard": f"{item['jaccard']:.3f}",
+                    "source": item["source"],
+                }
+            )
+    return rows
+
+
+def _score_marker_sets(spec: ExternalAnnotationProvider, markers: list[Any]) -> list[dict[str, Any]]:
+    marker_by_gene = {str(marker.gene).upper(): marker for marker in markers}
+    query = set(marker_by_gene)
+    scored: list[dict[str, Any]] = []
+    for label, genes in MARKER_DB.items():
+        signature = {gene.upper() for gene in genes}
+        matched = sorted(query & signature)
+        if not matched:
+            continue
+        n_matched = len(matched)
+        coverage = n_matched / len(signature)
+        jaccard = n_matched / len(query | signature)
+        rank_weight = sum(1.0 / max(1, int(getattr(marker_by_gene[gene], "rank", 1) or 1)) for gene in matched)
+        effect_weight = sum(max(0.0, float(getattr(marker_by_gene[gene], "log2fc", 0.0) or 0.0)) for gene in matched)
+        score = _provider_score(spec.provider_id, coverage, jaccard, rank_weight, effect_weight, len(query))
+        scored.append(
+            {
+                "label": label,
+                "score": score,
+                "matched_markers": matched,
+                "n_matched": n_matched,
+                "n_signature_genes": len(signature),
+                "coverage": coverage,
+                "jaccard": jaccard,
+                "source": f"scaudit.MARKER_DB:{spec.provider_id}_style_adapter",
+            }
+        )
+    scored.sort(key=lambda item: (item["score"], item["coverage"], item["jaccard"], item["n_matched"]), reverse=True)
+    return scored
+
+
+def _provider_score(provider_id: str, coverage: float, jaccard: float, rank_weight: float, effect_weight: float, n_query: int) -> float:
+    query_scale = max(1.0, math.log2(n_query + 1.0))
+    if provider_id == "sctype":
+        return coverage * 0.55 + min(1.0, rank_weight / query_scale) * 0.30 + jaccard * 0.15
+    if provider_id == "sccatch":
+        return coverage * 0.45 + jaccard * 0.35 + min(1.0, rank_weight / query_scale) * 0.20
+    if provider_id == "scsa":
+        return coverage * 0.35 + jaccard * 0.25 + min(1.0, effect_weight / (2.0 * query_scale)) * 0.40
+    return coverage
+
+
+def _confidence(score: float) -> str:
+    if score >= 0.55:
+        return "high"
+    if score >= 0.30:
+        return "moderate"
+    return "low"
+
+
+def _summary(spec: ExternalAnnotationProvider, prediction_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    clusters = {str(row["cluster_id"]) for row in prediction_rows}
+    top_rows = [row for row in prediction_rows if int(row.get("rank") or 0) == 1]
+    if top_rows:
+        top_finding = f"{spec.title} produced top predictions for {len(top_rows)} clusters with the scaudit-native adapter."
+    else:
+        top_finding = f"{spec.title} did not produce predictions."
+    return {
+        "n_clusters_with_predictions": len(clusters),
+        "n_predictions": len(prediction_rows),
+        "top_finding": top_finding,
+    }
+
+
+def _cluster_results(prediction_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    clusters: dict[str, Any] = {}
+    for row in prediction_rows:
+        clusters.setdefault(str(row["cluster_id"]), {"predictions": []})
+        clusters[str(row["cluster_id"])]["predictions"].append(dict(row))
+    return clusters
+
+
+def _scoring_parameters(spec: ExternalAnnotationProvider, *, species: str, tissue: str) -> dict[str, Any]:
+    return {
+        "adapter": f"{spec.provider_id}_style",
+        "marker_database": "scaudit.markers.MARKER_DB",
+        "top_predictions_per_cluster": 5,
+        "species": species,
+        "tissue": tissue,
+        "score_components": ["signature coverage", "Jaccard overlap", "rank/effect weighted marker support"],
+    }
 
 
 def _software_versions(spec: ExternalAnnotationProvider) -> dict[str, str]:
@@ -229,19 +379,18 @@ def _write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) ->
 def _callout_markdown(spec: ExternalAnnotationProvider, warnings: list[str]) -> str:
     lines = [
         "::: {.callout-note}",
-        f"This focused report is reserved for {spec.tool}. It is separated from marker-based evidence so users can inspect this tool's exact dependencies, parameters, and output contract.",
+        f"This focused report executes `{spec.tool}`. It is separated from marker-based evidence so users can inspect this provider's exact adapter, parameters, and output contract.",
         ":::",
         "",
-        "::: {.callout-warning}",
-        "Provider execution is currently skipped:",
-        "",
     ]
-    lines.extend(f"- {warning}" for warning in warnings)
-    lines.extend([":::", ""])
+    if warnings:
+        lines.extend(["::: {.callout-warning}", "Warnings detected:", ""])
+        lines.extend(f"- {warning}" for warning in warnings)
+        lines.extend([":::", ""])
     lines.extend(
         [
             "::: {.callout-tip}",
-            f"Before enabling this provider, pin the tool/database source and add a runnable adapter that writes `tables/cluster_predictions.csv` and `{spec.result_file}`.",
+            f"To replace the scaudit-native adapter with exact official execution, pin the tool/database source and keep writing `tables/cluster_predictions.csv` and `{spec.result_file}`.",
             ":::",
             "",
         ]
@@ -256,6 +405,8 @@ def _write_provider_qmd(
     cluster_key: str,
     provider_dir: Path,
     *,
+    species: str = "",
+    tissue: str = "",
     sample_key: str = "",
     batch_key: str = "",
 ) -> None:
@@ -286,6 +437,8 @@ scaudit:
 params:
   input_h5ad: "{dataset_path}"
   cluster_key: "{cluster_key}"
+  species: "{species}"
+  tissue: "{tissue}"
   sample_key: "{sample_key}"
   batch_key: "{batch_key}"
   output_dir: "{provider_dir}"
@@ -345,6 +498,8 @@ What evidence does {spec.tool} provide for cluster-level cell annotation?
 | --- | --- |
 | Input h5ad | `{dataset_path}` |
 | Cluster key | `{cluster_key}` |
+| Species | `{species}` |
+| Tissue | `{tissue}` |
 | Sample key | `{sample_key}` |
 | Batch key | `{batch_key}` |
 | Tool | `{spec.tool}` |
@@ -363,6 +518,8 @@ payload = write_external_annotation_provider_outputs(
     Path(r"{dataset_path}"),
     r"{cluster_key}",
     Path(r"{provider_dir}"),
+    species=r"{species}",
+    tissue=r"{tissue}",
     sample_key=r"{sample_key}",
     batch_key=r"{batch_key}",
 )
@@ -397,7 +554,7 @@ from IPython.display import HTML, Markdown, display
 
 predictions = pd.read_csv("tables/cluster_predictions.csv")
 if predictions.empty:
-    display(Markdown("No cluster-level predictions are available yet because this provider is scaffolded but not executed."))
+    display(Markdown("No cluster-level predictions are available. Check provider warnings and marker evidence availability."))
 else:
     display(HTML(predictions.to_html(index=False, classes="scaudit-table", border=0)))
 ```

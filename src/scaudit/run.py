@@ -114,6 +114,8 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
     cluster_key = str(dataset.get("cluster_key", ""))
     sample_key = str(dataset.get("sample_key", ""))
     batch_key = str(dataset.get("batch_key", ""))
+    species = str(dataset.get("species", ""))
+    tissue = str(dataset.get("tissue", ""))
 
     diagnosis = diagnose_dataset(dataset_path, cluster_key=cluster_key, sample_key=sample_key)
     diagnosis_payload = diagnosis.to_dict()
@@ -168,6 +170,9 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
             dataset_path,
             cluster_key,
             output_dir,
+            evidence=evidence,
+            species=species,
+            tissue=tissue,
             sample_key=sample_key,
             batch_key=batch_key,
         ),
@@ -176,6 +181,9 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
             dataset_path,
             cluster_key,
             output_dir,
+            evidence=evidence,
+            species=species,
+            tissue=tissue,
             sample_key=sample_key,
             batch_key=batch_key,
         ),
@@ -184,6 +192,9 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
             dataset_path,
             cluster_key,
             output_dir,
+            evidence=evidence,
+            species=species,
+            tissue=tissue,
             sample_key=sample_key,
             batch_key=batch_key,
         ),
