@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import html
 import math
 from pathlib import Path
 from typing import Any
@@ -103,10 +104,13 @@ def write_marker_provider_outputs(
     _write_csv(tables_dir / "marker_strength_summary.csv", strength_rows, STRENGTH_TABLE_FIELDS)
 
     figure_artifacts = []
+    figure_artifacts.extend(_write_cluster_umap(dataset_path, cluster_key, figures_dir, tables_dir, warnings))
     figure_artifacts.extend(_write_marker_heatmap(figures_dir, tables_dir, marker_rows, warnings))
     figure_artifacts.extend(_write_marker_dotplot(dataset_path, cluster_key, figures_dir, tables_dir, marker_rows, warnings))
     callout_path = output_dir / "callouts.md"
     callout_path.write_text(_callout_markdown(warnings, strength_rows, signature_rows), encoding="utf-8")
+    signature_tabs_path = output_dir / "cluster_signature_tabs.md"
+    signature_tabs_path.write_text(_signature_tabs_markdown(signature_rows), encoding="utf-8")
 
     payload = {
         "schema_version": "0.1.0",
@@ -152,6 +156,7 @@ def write_marker_provider_outputs(
                 "tables/marker_strength_summary.csv",
                 "tables/marker_log2fc_heatmap.source.csv",
                 "tables/marker_expression_dotplot.source.csv",
+                "tables/cluster_umap.source.csv",
             ],
         },
         "results": {
@@ -288,6 +293,75 @@ def _write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str] | N
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _write_cluster_umap(dataset_path: Path, cluster_key: str, figures_dir: Path, tables_dir: Path, warnings: list[str]) -> list[Path]:
+    if not dataset_path.exists() or not cluster_key:
+        return []
+    try:
+        import anndata as ad
+        import matplotlib.pyplot as plt
+        import pandas as pd
+    except Exception:
+        warnings.append("anndata, pandas, or matplotlib was unavailable; cluster UMAP figure was skipped.")
+        return []
+
+    try:
+        adata = ad.read_h5ad(dataset_path)
+    except Exception:
+        warnings.append("Input h5ad could not be read for cluster UMAP generation.")
+        return []
+    if cluster_key not in adata.obs:
+        warnings.append(f"cluster_key '{cluster_key}' was not found; cluster UMAP generation was skipped.")
+        return []
+    if "X_umap" not in adata.obsm:
+        warnings.append("UMAP coordinates were not found in adata.obsm['X_umap']; cluster UMAP figure was skipped.")
+        return []
+
+    coords = adata.obsm["X_umap"]
+    cluster_values = adata.obs[cluster_key].astype(str)
+    rows = [
+        {"umap_1": float(x), "umap_2": float(y), "cluster_id": str(cluster)}
+        for x, y, cluster in zip(coords[:, 0], coords[:, 1], cluster_values)
+    ]
+    df = pd.DataFrame(rows)
+    df.to_csv(tables_dir / "cluster_umap.source.csv", index=False)
+
+    clusters = sorted(df["cluster_id"].unique().tolist())
+    fig, ax = plt.subplots(figsize=(5.8, 5.2))
+    for index, cluster in enumerate(clusters):
+        subset = df[df["cluster_id"] == cluster]
+        ax.scatter(
+            subset["umap_1"],
+            subset["umap_2"],
+            s=5,
+            alpha=0.72,
+            linewidths=0,
+            label=str(cluster),
+            color=_provider_palette(index),
+        )
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    ax.set_title("Clusters")
+    ax.legend(title="Cluster", loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False, markerscale=2.4)
+    fig.subplots_adjust(left=0.11, right=0.78, top=0.9, bottom=0.12)
+    return _save_figure(fig, figures_dir / "cluster_umap")
+
+
+def _provider_palette(index: int) -> str:
+    palette = [
+        "#2f67c8",
+        "#2a9d5c",
+        "#d97706",
+        "#7446a8",
+        "#129a9f",
+        "#c0392b",
+        "#6b8e23",
+        "#be185d",
+        "#4b5563",
+        "#b45309",
+    ]
+    return palette[index % len(palette)]
 
 
 def _write_marker_heatmap(figures_dir: Path, tables_dir: Path, marker_rows: list[dict[str, Any]], warnings: list[str]) -> list[Path]:
@@ -459,6 +533,79 @@ def _callout_markdown(warnings: list[str], strength_rows: list[dict[str, Any]], 
     return "\n".join(lines)
 
 
+def _signature_tabs_markdown(signature_rows: list[dict[str, Any]]) -> str:
+    if not signature_rows:
+        return "No marker signature matches were found.\n"
+
+    clusters = sorted({str(row["cluster_id"]) for row in signature_rows})
+    lines = ["::: {.panel-tabset}", ""]
+    for cluster in clusters:
+        rows = [row for row in signature_rows if str(row["cluster_id"]) == cluster]
+        rows.sort(key=lambda row: int(row.get("rank") or 9999))
+        lines.append(f"## Cluster {html.escape(cluster)}")
+        lines.append("")
+        lines.append(_signature_summary_table(rows[:10]))
+        lines.append("")
+        lines.append("<details class=\"signature-gene-details\">")
+        lines.append("<summary>Show matched and missing genes</summary>")
+        lines.append("")
+        lines.append(_signature_gene_details(rows[:10]))
+        lines.append("</details>")
+        lines.append("")
+    lines.append(":::")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _signature_summary_table(rows: list[dict[str, Any]]) -> str:
+    headers = ["Rank", "Label", "Matched", "Signature genes", "Coverage", "Overlap"]
+    body = []
+    for row in rows:
+        body.append(
+            "<tr>"
+            f"<td>{html.escape(str(row.get('rank', '')))}</td>"
+            f"<td>{html.escape(str(row.get('label', '')))}</td>"
+            f"<td>{html.escape(str(row.get('n_matched', '')))}</td>"
+            f"<td>{html.escape(str(row.get('n_signature_genes', '')))}</td>"
+            f"<td>{_format_fraction(row.get('coverage'))}</td>"
+            f"<td>{_format_decimal(row.get('overlap_score'))}</td>"
+            "</tr>"
+        )
+    head_html = "".join(f"<th>{header}</th>" for header in headers)
+    body_html = "".join(body)
+    return f'<table class="scaudit-table cluster-signature-table"><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>'
+
+
+def _signature_gene_details(rows: list[dict[str, Any]]) -> str:
+    items = []
+    for row in rows:
+        label = html.escape(str(row.get("label", "")))
+        matched = html.escape(str(row.get("matched_genes", "") or "none"))
+        missing = html.escape(str(row.get("missing_genes", "") or "none"))
+        items.append(
+            "<section class=\"signature-gene-block\">"
+            f"<h4>{label}</h4>"
+            f"<p><strong>Matched genes:</strong> {matched}</p>"
+            f"<p><strong>Missing genes:</strong> {missing}</p>"
+            "</section>"
+        )
+    return "\n".join(items)
+
+
+def _format_fraction(value: Any) -> str:
+    try:
+        return f"{float(value):.0%}"
+    except (TypeError, ValueError):
+        return html.escape(str(value or ""))
+
+
+def _format_decimal(value: Any) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return html.escape(str(value or ""))
+
+
 def _write_marker_qmd(qmd_path: Path, dataset_path: Path, cluster_key: str, provider_dir: Path, *, n_top_genes: int) -> None:
     source_dir = Path(__file__).resolve().parents[2]
     text = f"""---
@@ -540,6 +687,69 @@ details.code-fold[open] > summary {{
 .cluster-signature-table {{
   margin-bottom: 1.2rem;
 }}
+
+.marker-signature-workspace {{
+  display: grid;
+  grid-template-columns: minmax(260px, 0.95fr) minmax(360px, 1.45fr);
+  gap: 1.1rem;
+  align-items: start;
+}}
+
+.marker-signature-umap {{
+  position: sticky;
+  top: 1rem;
+}}
+
+.marker-signature-umap img {{
+  width: 100%;
+  height: auto;
+  border: 1px solid #e1e7ef;
+  border-radius: 8px;
+}}
+
+.marker-signature-tabs {{
+  min-width: 0;
+}}
+
+.signature-gene-details {{
+  margin: 0.35rem 0 1.1rem;
+  border: 1px solid #e1e7ef;
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  background: #fbfcff;
+}}
+
+.signature-gene-details summary {{
+  color: #18324a;
+  cursor: pointer;
+  font-weight: 650;
+}}
+
+.signature-gene-block {{
+  border-top: 1px solid #e8edf5;
+  margin-top: 0.65rem;
+  padding-top: 0.55rem;
+}}
+
+.signature-gene-block h4 {{
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+}}
+
+.signature-gene-block p {{
+  margin: 0.2rem 0;
+  overflow-wrap: anywhere;
+}}
+
+@media (max-width: 900px) {{
+  .marker-signature-workspace {{
+    grid-template-columns: 1fr;
+  }}
+
+  .marker-signature-umap {{
+    position: static;
+  }}
+}}
 </style>
 
 ## Question
@@ -601,35 +811,17 @@ HTML(strength.to_html(index=False, classes="scaudit-table", border=0))
 
 Signature scoring uses `scaudit.markers.MARKER_DB`. Coverage is the fraction of a known marker signature observed in the cluster marker set; overlap score is the Jaccard overlap between query markers and the signature genes.
 
-```{{python}}
-import pandas as pd
-from IPython.display import HTML, Markdown, display
+::: {{.marker-signature-workspace}}
+::: {{.marker-signature-umap}}
+![Cluster UMAP](figures/cluster_umap.png)
+:::
 
-signatures = pd.read_csv("tables/marker_signatures.csv")
-display_columns = [
-    "rank",
-    "label",
-    "n_matched",
-    "n_signature_genes",
-    "coverage",
-    "overlap_score",
-    "matched_genes",
-    "missing_genes",
-]
+::: {{.marker-signature-tabs}}
+{{{{< include cluster_signature_tabs.md >}}}}
+:::
+:::
 
-if signatures.empty:
-    display(Markdown("No marker signature matches were found."))
-else:
-    for cluster_id, cluster_table in signatures.groupby("cluster_id", sort=True):
-        display(Markdown(f"### Cluster {{cluster_id}}"))
-        display(
-            HTML(
-                cluster_table[display_columns]
-                .head(10)
-                .to_html(index=False, classes="scaudit-table cluster-signature-table", border=0)
-            )
-        )
-```
+Full matched and missing gene lists are available in `tables/marker_signatures.csv` and `marker_based.evidence.json`.
 
 ## Differential Marker Table
 
