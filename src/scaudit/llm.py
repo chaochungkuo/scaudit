@@ -28,10 +28,7 @@ Confidence: lineage={lineage}, subtype={subtype}, overall={overall}
 Marker genes (top, log2FC-filtered):
 {marker_list}
 
-Model evidence:
-{model_evidence}
-
-Reference / DB matches:
+Marker database matches:
 {ref_evidence}
 
 Reasoning so far:

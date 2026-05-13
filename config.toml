@@ -19,24 +19,27 @@ ortholog_map = "none"
 min_gene_overlap_warning = 0.70
 min_gene_overlap_strong_warning = 0.50
 
-[references]
-auto_select = true
-max_references = 3
-registry = "default"
-cache_dir = "references"
-selected = []
-allow_condition_mismatch = true
-require_species_match = true
+[cache]
+dir = "~/.cache/scaudit"
+
+[marker_databases.cellmarker]
+path = ""
+
+[marker_databases.panglaodb]
+path = ""
+
+[marker_databases.user_markers]
+path = "examples/templates/user_marker_genes.csv"
+name = "PBMC user marker genes"
 
 [methods]
 marker_based = true
-reference_based = false
 ontology_based = false
 
-[methods.model_based]
-celltypist = false
-scanvi = false
-scvi = false
+[methods.marker_databases]
+cellmarker = true
+panglaodb = true
+user_markers = true
 
 [methods.qc]
 enabled = true

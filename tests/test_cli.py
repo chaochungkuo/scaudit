@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
+import zipfile
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
@@ -18,11 +19,43 @@ from scaudit.cli import collect_capabilities, main
 from scaudit.data import ClusterEvidence, MarkerGene, _fill_composition_evidence, _fill_marker_signature_evidence, _qc_metric_warning, _reference_gene_warnings, infer_gene_id_counts, infer_gene_id_type, summarize_cluster_key
 from scaudit.llm import OpenAICompatibleClient, enrich_cards_with_llm
 from scaudit.markers import attach_marker_evidence, marker_rows_from_rank_genes_groups
+from scaudit.providers.cellmarker import write_cellmarker_provider_outputs
 from scaudit.providers.marker_based import write_marker_provider_outputs
 from scaudit.providers.external_annotation import write_external_annotation_provider_outputs
-from scaudit.providers.reference_mapping import write_reference_provider_outputs
+from scaudit.providers.panglaodb import write_panglaodb_provider_outputs
+from scaudit.providers.user_markers import write_user_markers_provider_outputs
 from scaudit.report import render_draft_report
 from scaudit.run import _assign_annotation, _llm_settings, build_annotation_cards
+
+
+def _write_minimal_xlsx(path: Path, rows: list[list[str]]) -> None:
+    sheet_rows = []
+    for row_index, row in enumerate(rows, start=1):
+        cells = []
+        for col_index, value in enumerate(row):
+            col = chr(ord("A") + col_index)
+            cells.append(
+                f'<c r="{col}{row_index}" t="inlineStr"><is><t>{value}</t></is></c>'
+            )
+        sheet_rows.append(f'<row r="{row_index}">{"".join(cells)}</row>')
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "xl/workbook.xml",
+            '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        )
+        archive.writestr(
+            "xl/_rels/workbook.xml.rels",
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+            "</Relationships>",
+        )
+        archive.writestr(
+            "xl/worksheets/sheet1.xml",
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            f'<sheetData>{"".join(sheet_rows)}</sheetData></worksheet>',
+        )
 
 
 class CliTests(unittest.TestCase):
@@ -117,9 +150,7 @@ class CliTests(unittest.TestCase):
             cluster_id="0",
             cell_count=100,
             markers=[],
-            celltypist_label=None,
-            celltypist_prob=None,
-            ref_matches=[],
+            marker_db_matches=[],
             qc_warnings=[str(warning)],
         )
 
@@ -207,6 +238,7 @@ class CliTests(unittest.TestCase):
                 main(["init-config", "input.h5ad", "--out", str(config_path)])
             text = config_path.read_text(encoding="utf-8")
             text = text.replace('dir = "results"', f'dir = "{temp_path / "results"}"')
+            text = text.replace("cellmarker = true", "cellmarker = false")
             config_path.write_text(text, encoding="utf-8")
 
             with redirect_stdout(io.StringIO()):
@@ -220,6 +252,8 @@ class CliTests(unittest.TestCase):
             self.assertTrue((output_dir / "report" / "report.html").exists())
             self.assertTrue((output_dir / "report" / "review.html").exists())
             self.assertTrue((output_dir / "evidence_reports" / "provider_reports.json").exists())
+            self.assertTrue((output_dir / "evidence_reports" / "cross_provider_summary.csv").exists())
+            self.assertTrue((output_dir / "evidence_reports" / "cross_provider_summary.json").exists())
             self.assertTrue((output_dir / "evidence_reports" / "marker_based" / "marker_based.qmd").exists())
             self.assertTrue((output_dir / "evidence_reports" / "marker_based" / "marker_based.html").exists())
             self.assertTrue((output_dir / "evidence_reports" / "marker_based" / "marker_based.evidence.json").exists())
@@ -230,31 +264,19 @@ class CliTests(unittest.TestCase):
             self.assertIn("cluster_signature_tabs.md", marker_qmd)
             self.assertIn("cluster_marker_tabs.md", marker_qmd)
             self.assertIn("Signature scoring uses `scaudit.markers.MARKER_DB`", marker_qmd)
-            self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.qmd").exists())
-            self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.html").exists())
-            self.assertTrue((output_dir / "evidence_reports" / "reference_mapping" / "reference_mapping.evidence.json").exists())
             provider_index = json.loads((output_dir / "evidence_reports" / "provider_reports.json").read_text(encoding="utf-8"))
+            self.assertIn("cross_provider_summary", provider_index)
             provider_ids = {provider["id"] for provider in provider_index["providers"]}
-            self.assertTrue({"marker_based", "reference_mapping", "sctype", "sccatch", "scsa"}.issubset(provider_ids))
-            for provider_id in ("sctype", "sccatch", "scsa"):
-                self.assertTrue((output_dir / "evidence_reports" / provider_id / f"{provider_id}.qmd").exists())
-                self.assertTrue((output_dir / "evidence_reports" / provider_id / f"{provider_id}.html").exists())
-                self.assertTrue((output_dir / "evidence_reports" / provider_id / f"{provider_id}.evidence.json").exists())
-                self.assertTrue((output_dir / "evidence_reports" / provider_id / "cluster_prediction_tabs.md").exists())
-                provider_payload = json.loads(
-                    (output_dir / "evidence_reports" / provider_id / f"{provider_id}.evidence.json").read_text(encoding="utf-8")
-                )
-                self.assertIn(provider_payload["run"]["status"], {"success", "warning"})
-                provider_qmd = (output_dir / "evidence_reports" / provider_id / f"{provider_id}.qmd").read_text(encoding="utf-8")
-                self.assertIn("figures/cluster_umap.png", provider_qmd)
-                self.assertIn("cluster_prediction_tabs.md", provider_qmd)
+            self.assertIn("marker_based", provider_ids)
+            self.assertNotIn("reference_mapping", provider_ids)
+            self.assertNotIn("cellmarker", provider_ids)
+            self.assertFalse({"sctype", "sccatch", "scsa"} & provider_ids)
             report_html = (output_dir / "report" / "report.html").read_text(encoding="utf-8")
-            self.assertIn("Focused evidence reports", report_html)
+            self.assertIn('class="report-toc"', report_html)
+            self.assertIn("Evidence workflow", report_html)
+            self.assertIn("Provider status", report_html)
+            self.assertIn("Artifacts and detail pages", report_html)
             self.assertIn("../evidence_reports/marker_based/marker_based.html", report_html)
-            self.assertIn("../evidence_reports/reference_mapping/reference_mapping.html", report_html)
-            self.assertIn("../evidence_reports/sctype/sctype.html", report_html)
-            self.assertIn("../evidence_reports/sccatch/sccatch.html", report_html)
-            self.assertIn("../evidence_reports/scsa/scsa.html", report_html)
 
     def test_marker_provider_writes_standard_json_and_qmd_callouts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -307,32 +329,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("<td>1.00e-03</td>", marker_tabs)
             self.assertNotIn("<th></th>", marker_tabs)
 
-    def test_reference_provider_writes_standard_json_and_missing_reference_callout(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            evidence = {
-                "0": ClusterEvidence(
-                    "0",
-                    reference_matches=[
-                        {"ref_id": "builtin", "label": "T cell", "jaccard": 0.2, "n_shared": 4},
-                        {"ref_id": "pbmc_ref", "label": "CD4 T cell", "jaccard": 0.18, "n_shared": 6},
-                    ],
-                )
-            }
-
-            payload = write_reference_provider_outputs(temp_path / "input.h5ad", "leiden", temp_path / "reference_mapping", evidence=evidence)
-
-            self.assertEqual(payload["provider"]["id"], "reference_mapping")
-            self.assertEqual(payload["methods"][2]["formula"], "Jaccard(query cluster marker genes, reference label marker genes)")
-            self.assertEqual(payload["results"]["summary"]["n_matches"], 1)
-            evidence_json = json.loads((temp_path / "reference_mapping" / "reference_mapping.evidence.json").read_text(encoding="utf-8"))
-            self.assertEqual(evidence_json["schema_version"], "0.1.0")
-            self.assertTrue((temp_path / "reference_mapping" / "tables" / "reference_matches.csv").exists())
-            callouts = (temp_path / "reference_mapping" / "callouts.md").read_text(encoding="utf-8")
-            self.assertIn("callout-note", callouts)
-            self.assertIn("callout-warning", callouts)
-
-    def test_external_annotation_provider_writes_predictions(self) -> None:
+    def test_external_annotation_provider_skips_without_official_backend(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             evidence = {
@@ -350,22 +347,215 @@ class CliTests(unittest.TestCase):
             )
 
             self.assertEqual(payload["provider"]["id"], "sctype")
-            self.assertEqual(payload["run"]["status"], "success")
-            self.assertGreater(payload["results"]["summary"]["n_predictions"], 0)
+            self.assertEqual(payload["run"]["status"], "skipped")
+            self.assertEqual(payload["results"]["summary"]["n_predictions"], 0)
             self.assertTrue((temp_path / "sctype" / "tables" / "provider_status.csv").exists())
             self.assertTrue((temp_path / "sctype" / "tables" / "cluster_predictions.csv").exists())
             self.assertTrue((temp_path / "sctype" / "cluster_prediction_tabs.md").exists())
             status = (temp_path / "sctype" / "tables" / "provider_status.csv").read_text(encoding="utf-8")
-            self.assertIn("Computed standardized cluster predictions", status)
+            self.assertIn("Official backend is not_configured", status)
             predictions = (temp_path / "sctype" / "tables" / "cluster_predictions.csv").read_text(encoding="utf-8")
-            self.assertIn("T cell", predictions)
-            self.assertIn("CD3D", predictions)
+            self.assertNotIn("T cell", predictions)
             tabs = (temp_path / "sctype" / "cluster_prediction_tabs.md").read_text(encoding="utf-8")
-            self.assertIn("## Cluster 0", tabs)
-            self.assertIn("Show matched markers and sources", tabs)
+            self.assertIn("No cluster-level predictions are available", tabs)
             callouts = (temp_path / "sctype" / "callouts.md").read_text(encoding="utf-8")
             self.assertIn("callout-note", callouts)
             self.assertIn("callout-warning", callouts)
+
+    def test_cellmarker_provider_scores_configured_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            database_path = temp_path / "cellmarker.csv"
+            database_path.write_text(
+                "species,tissue,cell type,gene\n"
+                "human,blood,T cell,CD3D\n"
+                "human,blood,T cell,CD3E\n"
+                "human,blood,T cell,TRAC\n"
+                "human,blood,B cell,MS4A1\n",
+                encoding="utf-8",
+            )
+            evidence = {
+                "0": ClusterEvidence(
+                    "0",
+                    markers=[
+                        MarkerGene("CD3D", 8.0, 1.6, 0.001),
+                        MarkerGene("CD3E", 7.0, 1.4, 0.001),
+                        MarkerGene("TRAC", 6.5, 1.2, 0.001),
+                    ],
+                )
+            }
+
+            payload = write_cellmarker_provider_outputs(
+                temp_path / "input.h5ad",
+                "leiden",
+                temp_path / "cellmarker",
+                evidence=evidence,
+                database_path=database_path,
+                species="human",
+                tissue="blood",
+            )
+
+            self.assertEqual(payload["provider"]["id"], "cellmarker")
+            self.assertEqual(payload["run"]["status"], "success")
+            self.assertEqual(payload["results"]["summary"]["n_clusters_with_matches"], 1)
+            matches = (temp_path / "cellmarker" / "tables" / "database_matches.csv").read_text(encoding="utf-8")
+            self.assertIn("T cell", matches)
+            self.assertIn("CD3D, CD3E, TRAC", matches)
+            best_matches = (temp_path / "cellmarker" / "tables" / "best_database_matches.csv").read_text(encoding="utf-8")
+            self.assertIn("T cell", best_matches)
+            visuals = (temp_path / "cellmarker" / "database_visuals.md").read_text(encoding="utf-8")
+            self.assertIn("cluster_match_tabs.md", visuals)
+            normalized = (temp_path / "cellmarker" / "tables" / "cluster_label_evidence.csv").read_text(encoding="utf-8")
+            self.assertIn("marker_database", normalized)
+            self.assertIn("tables/best_database_matches.csv", payload["artifacts"]["tables"])
+            metadata = payload["results"]["database"]
+            self.assertEqual(metadata["database_name"], "CellMarker 2.0")
+            self.assertTrue(metadata["sha256"])
+
+    def test_cellmarker_provider_downloads_and_reuses_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            source_path = temp_path / "source_cellmarker.xlsx"
+            _write_minimal_xlsx(
+                source_path,
+                [
+                    ["species", "tissue", "cell type", "gene"],
+                    ["human", "blood", "T cell", "CD3D"],
+                    ["human", "blood", "T cell", "CD3E"],
+                    ["human", "blood", "T cell", "TRAC"],
+                ],
+            )
+            evidence = {
+                "0": ClusterEvidence(
+                    "0",
+                    markers=[
+                        MarkerGene("CD3D", 8.0, 1.6, 0.001),
+                        MarkerGene("CD3E", 7.0, 1.4, 0.001),
+                        MarkerGene("TRAC", 6.5, 1.2, 0.001),
+                    ],
+                )
+            }
+
+            calls = []
+
+            def fake_urlretrieve(url: str, filename: Path) -> tuple[str, None]:
+                calls.append(url)
+                Path(filename).write_bytes(source_path.read_bytes())
+                return str(filename), None
+
+            with patch("urllib.request.urlretrieve", side_effect=fake_urlretrieve):
+                first = write_cellmarker_provider_outputs(
+                    temp_path / "input.h5ad",
+                    "leiden",
+                    temp_path / "first",
+                    evidence=evidence,
+                    cache_root=temp_path / "cache",
+                    species="human",
+                    tissue="blood",
+                )
+                second = write_cellmarker_provider_outputs(
+                    temp_path / "input.h5ad",
+                    "leiden",
+                    temp_path / "second",
+                    evidence=evidence,
+                    cache_root=temp_path / "cache",
+                    species="human",
+                    tissue="blood",
+                )
+
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(first["run"]["status"], "success")
+            self.assertEqual(second["run"]["status"], "success")
+            cached_path = temp_path / "cache" / "marker_databases" / "cellmarker" / "Cell_marker_Human.xlsx"
+            self.assertTrue(cached_path.exists())
+            self.assertTrue(cached_path.with_suffix(".xlsx.metadata.json").exists())
+
+    def test_panglaodb_provider_scores_configured_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            database_path = temp_path / "panglaodb.tsv"
+            database_path.write_text(
+                "species\tofficial gene symbol\tcell type\torgan\n"
+                "Hs\tCD3D\tT cells\tImmune system\n"
+                "Hs\tCD3E\tT cells\tImmune system\n"
+                "Hs\tTRAC\tT cells\tImmune system\n"
+                "Hs\tMS4A1\tB cells naive\tImmune system\n",
+                encoding="utf-8",
+            )
+            evidence = {
+                "0": ClusterEvidence(
+                    "0",
+                    markers=[
+                        MarkerGene("CD3D", 8.0, 1.6, 0.001),
+                        MarkerGene("CD3E", 7.0, 1.4, 0.001),
+                        MarkerGene("TRAC", 6.5, 1.2, 0.001),
+                    ],
+                )
+            }
+
+            payload = write_panglaodb_provider_outputs(
+                temp_path / "input.h5ad",
+                "leiden",
+                temp_path / "panglaodb",
+                evidence=evidence,
+                database_path=database_path,
+                species="human",
+                tissue="immune",
+            )
+
+            self.assertEqual(payload["provider"]["id"], "panglaodb")
+            self.assertEqual(payload["run"]["status"], "success")
+            self.assertEqual(payload["results"]["summary"]["n_clusters_with_matches"], 1)
+            matches = (temp_path / "panglaodb" / "tables" / "database_matches.csv").read_text(encoding="utf-8")
+            self.assertIn("T cells", matches)
+            self.assertIn("CD3D, CD3E, TRAC", matches)
+            self.assertTrue((temp_path / "panglaodb" / "tables" / "best_database_matches.csv").exists())
+            self.assertTrue((temp_path / "panglaodb" / "database_visuals.md").exists())
+            self.assertIn("tables/best_database_matches.csv", payload["artifacts"]["tables"])
+            normalized = (temp_path / "panglaodb" / "tables" / "cluster_label_evidence.csv").read_text(encoding="utf-8")
+            self.assertIn("panglaodb_overlap", normalized)
+
+    def test_user_markers_provider_scores_configured_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            database_path = temp_path / "user_markers.csv"
+            database_path.write_text(
+                "cell_type,gene,species,tissue,source,notes\n"
+                "T cell,CD3D,human,blood,my_lab,\n"
+                "T cell,CD3E,human,blood,my_lab,\n"
+                "T cell,TRAC,human,blood,my_lab,\n"
+                "B cell,MS4A1,human,blood,my_lab,\n",
+                encoding="utf-8",
+            )
+            evidence = {
+                "0": ClusterEvidence(
+                    "0",
+                    markers=[
+                        MarkerGene("CD3D", 8.0, 1.6, 0.001),
+                        MarkerGene("CD3E", 7.0, 1.4, 0.001),
+                        MarkerGene("TRAC", 6.5, 1.2, 0.001),
+                    ],
+                )
+            }
+
+            payload = write_user_markers_provider_outputs(
+                temp_path / "input.h5ad",
+                "leiden",
+                temp_path / "user_markers",
+                evidence=evidence,
+                database_path=database_path,
+                species="human",
+                tissue="blood",
+            )
+
+            self.assertEqual(payload["provider"]["id"], "user_markers")
+            self.assertEqual(payload["run"]["status"], "success")
+            self.assertEqual(payload["results"]["database"]["database_name"], "User marker genes")
+            matches = (temp_path / "user_markers" / "tables" / "database_matches.csv").read_text(encoding="utf-8")
+            self.assertIn("T cell", matches)
+            self.assertIn("CD3D, CD3E, TRAC", matches)
+            normalized = (temp_path / "user_markers" / "tables" / "cluster_label_evidence.csv").read_text(encoding="utf-8")
+            self.assertIn("user_markers_overlap", normalized)
 
     def test_build_annotation_cards_from_cluster_sizes(self) -> None:
         cards = build_annotation_cards({"cluster_sizes": {"0": 10, "1": 12}})
@@ -544,7 +734,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("jaccard", top)
         self.assertGreater(top["jaccard"], 0)
 
-    def test_report_umap_has_cluster_confidence_and_sample_tabs(self) -> None:
+    def test_report_has_navigation_hub_and_review_priorities(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             diagnosis_path = temp_path / "diagnosis.json"
@@ -632,53 +822,35 @@ class CliTests(unittest.TestCase):
             report_path = render_draft_report(report_dir, diagnosis_path, cards_path)
             html = report_path.read_text(encoding="utf-8")
 
-            self.assertIn('data-umap-mode="cluster"', html)
-            self.assertIn('data-umap-mode="confidence"', html)
-            self.assertIn('data-umap-mode="sample"', html)
+            self.assertIn('class="report-toc"', html)
+            self.assertIn('href="#overview"', html)
+            self.assertIn('href="#cluster-overview"', html)
+            self.assertIn('href="#workflow"', html)
+            self.assertIn('href="#review-priorities"', html)
+            self.assertIn('href="#artifacts"', html)
             self.assertIn("https://github.com/chaochungkuo/scaudit", html)
             self.assertIn('class="logo-mark"', html)
             self.assertIn('class="github-mark"', html)
             self.assertIn('aria-label="Open scaudit on GitHub"', html)
-            self.assertIn("LLM-generated", html)
-            self.assertIn("Generated by LLM model gpt-5.2", html)
-            self.assertIn("Evidence stack", html)
-            self.assertIn("Marker-based evidence", html)
-            self.assertIn("Scanpy rank_genes_groups", html)
-            self.assertIn("built-in marker signature scoring", html)
-            self.assertIn("signature coverage/overlap", html)
-            self.assertIn("Marker rule", html)
-            self.assertIn("1 strong, 1 moderate, 0 weak", html)
-            self.assertIn("CD3D (log2FC +1.70, padj 1.0e-04, score 8.20, strong)", html)
-            self.assertIn("Signature scoring", html)
-            self.assertIn("T cell (coverage 33%; overlap 0.25; matched: CD3D, NKG7)", html)
-            self.assertIn("Marker-set overlap", html)
-            self.assertIn("T cell (0.24), 4 shared genes", html)
-            self.assertIn("Reference-based mapping", html)
-            self.assertIn("Model-based prediction", html)
-            self.assertIn("Ontology reasoning", html)
-            self.assertIn("Planned Cell Ontology layer", html)
-            self.assertIn("LLM explanation", html)
-            self.assertIn("explanation-only", html)
-            self.assertIn("QC and artifact evidence", html)
-            self.assertIn("Evidence completeness", html)
-            self.assertIn("0/2 clusters have all evidence sources", html)
-            self.assertIn(">OK</span>", html)
-            self.assertIn(">NA</span>", html)
-            self.assertIn("Reference match matrix", html)
-            self.assertIn("window.scauditReferenceHeatmap", html)
-            self.assertIn("pbmc_ref:CD4 T cell", html)
-            self.assertIn("Jaccard: 0.180", html)
-            self.assertIn("Marker expression evidence", html)
-            self.assertIn("Marker expression", html)
-            self.assertIn("window.scauditMarkerHeatmap", html)
-            self.assertIn("colorscale", html)
-            self.assertIn("QC metrics", html)
-            self.assertIn("mito % median 10.2", html)
-            self.assertIn("Composition", html)
-            self.assertIn("sample s1 100%", html)
+            self.assertIn("Run overview", html)
+            self.assertIn("Cluster overview", html)
+            self.assertIn('data-umap-mode="cluster"', html)
+            self.assertIn('data-umap-mode="confidence"', html)
+            self.assertIn('data-umap-mode="sample"', html)
+            self.assertIn("Evidence workflow", html)
+            self.assertIn("Raw markers", html)
+            self.assertIn("Marker databases", html)
+            self.assertNotIn("Reference mapping", html)
+            self.assertIn("Review priorities", html)
+            self.assertIn("Cluster 0", html)
+            self.assertIn("T cell", html)
+            self.assertIn("Needs review", html)
+            self.assertIn("medium", html)
             self.assertIn("CD3D", html)
-            self.assertIn("log2FC: +1.70", html)
-            self.assertIn("window.scauditUMAPTraces", html)
+            self.assertIn("pending", html)
+            self.assertIn("Artifacts and detail pages", html)
+            self.assertIn("Review table", html)
+            self.assertIn("Methods", html)
 
     def test_debug_command_prints_cluster_evidence_panel(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -695,8 +867,8 @@ class CliTests(unittest.TestCase):
                             "confidence": {"overall": "medium", "lineage": "medium", "subtype": "unknown"},
                             "evidence": {
                                 "markers": [{"gene": "CD3D", "score": 8.2, "log2fc": 1.7, "pval_adj": 0.0001}],
-                                "models": [{"model": "CellTypist", "label": "T cell", "probability": 0.82}],
-                                "references": [{"ref_id": "pbmc_ref", "label": "CD4 T cell", "jaccard": 0.18, "n_shared": 6}],
+                                "models": [],
+                                "references": [{"ref_id": "builtin", "label": "T cell", "jaccard": 0.18, "n_shared": 6}],
                                 "qc": {"pct_counts_mt": {"obs_key": "pct_counts_mt", "mean": 8.0, "median": 7.0}},
                                 "composition": {
                                     "sample": {"obs_key": "sample", "dominant": "s1", "dominant_count": 9, "total": 10, "fraction": 0.9}
@@ -727,8 +899,9 @@ class CliTests(unittest.TestCase):
             self.assertIn("Decision path", text)
             self.assertIn("Top markers", text)
             self.assertIn("CD3D", text)
-            self.assertIn("Model evidence", text)
-            self.assertIn("Reference evidence", text)
+            self.assertNotIn("Model evidence", text)
+            self.assertNotIn("Reference evidence", text)
+            self.assertIn("Marker database evidence", text)
             self.assertIn("QC evidence", text)
             self.assertIn("Composition evidence", text)
             self.assertIn("s1", text)

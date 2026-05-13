@@ -1,0 +1,19 @@
+cell_type,gene,species,tissue,source,notes
+CD4 T cell,IL7R,human,blood,user_defined,Naive or central-memory T cell support
+CD4 T cell,CCR7,human,blood,user_defined,Naive or central-memory T cell support
+CD4 T cell,LTB,human,blood,user_defined,
+CD8 T cell,CD8A,human,blood,user_defined,
+CD8 T cell,CD8B,human,blood,user_defined,
+CD8 T cell,NKG7,human,blood,user_defined,Cytotoxic program support
+B cell,MS4A1,human,blood,user_defined,
+B cell,CD79A,human,blood,user_defined,
+B cell,CD74,human,blood,user_defined,
+NK cell,NKG7,human,blood,user_defined,
+NK cell,GNLY,human,blood,user_defined,
+NK cell,KLRD1,human,blood,user_defined,
+Monocyte,LYZ,human,blood,user_defined,
+Monocyte,S100A8,human,blood,user_defined,
+Monocyte,S100A9,human,blood,user_defined,
+Dendritic cell,FCER1A,human,blood,user_defined,
+Dendritic cell,CST3,human,blood,user_defined,
+Dendritic cell,LILRA4,human,blood,user_defined,Plasmacytoid dendritic cell support

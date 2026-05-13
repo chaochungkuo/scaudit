@@ -10,16 +10,17 @@ from pathlib import Path
 from typing import Any
 
 from scaudit import __version__
+from scaudit.cache import cache_root_from_config
 from scaudit.config import load_config, write_default_config
 from scaudit.data import ClusterEvidence, compute_cluster_evidence, diagnose_dataset
 from scaudit.markers import write_marker_evidence_csv
 from scaudit.providers import (
-    render_external_annotation_provider_report,
+    render_cellmarker_provider_report,
     render_marker_provider_report,
-    render_reference_provider_report,
+    render_panglaodb_provider_report,
+    render_user_markers_provider_report,
 )
 from scaudit.providers.schema import write_json
-from scaudit.references import load_registry, registry_path
 from scaudit.report import render_draft_report, render_final_report
 
 
@@ -116,16 +117,21 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
     batch_key = str(dataset.get("batch_key", ""))
     species = str(dataset.get("species", ""))
     tissue = str(dataset.get("tissue", ""))
+    cache_root = cache_root_from_config(config)
+    marker_databases = config.get("marker_databases", {})
+    cellmarker_config = marker_databases.get("cellmarker", {}) if isinstance(marker_databases, dict) else {}
+    cellmarker_path = _optional_path(cellmarker_config.get("path", "")) if isinstance(cellmarker_config, dict) else None
+    panglaodb_config = marker_databases.get("panglaodb", {}) if isinstance(marker_databases, dict) else {}
+    panglaodb_path = _optional_path(panglaodb_config.get("path", "")) if isinstance(panglaodb_config, dict) else None
+    user_markers_config = marker_databases.get("user_markers", {}) if isinstance(marker_databases, dict) else {}
+    user_markers_path = _optional_path(user_markers_config.get("path", "")) if isinstance(user_markers_config, dict) else None
 
     diagnosis = diagnose_dataset(dataset_path, cluster_key=cluster_key, sample_key=sample_key)
     diagnosis_payload = diagnosis.to_dict()
 
-    selected_refs = config.get("references", {}).get("selected", [])
-    ref_registry_path = registry_path() if selected_refs else None
     evidence = compute_cluster_evidence(
         dataset_path,
         cluster_key=cluster_key,
-        reference_registry_path=ref_registry_path,
         sample_key=sample_key,
         batch_key=batch_key,
     )
@@ -155,54 +161,233 @@ def prepare_run(config_path: Path, *, llm: bool = True) -> RunOutputs:
             evidence=evidence,
             sample_key=sample_key,
             batch_key=batch_key,
-        ),
-        render_reference_provider_report(
-            dataset_path,
-            cluster_key,
-            output_dir,
-            evidence=evidence,
-            reference_registry_path=ref_registry_path,
-            sample_key=sample_key,
-            batch_key=batch_key,
-        ),
-        render_external_annotation_provider_report(
-            "sctype",
-            dataset_path,
-            cluster_key,
-            output_dir,
-            evidence=evidence,
-            species=species,
-            tissue=tissue,
-            sample_key=sample_key,
-            batch_key=batch_key,
-        ),
-        render_external_annotation_provider_report(
-            "sccatch",
-            dataset_path,
-            cluster_key,
-            output_dir,
-            evidence=evidence,
-            species=species,
-            tissue=tissue,
-            sample_key=sample_key,
-            batch_key=batch_key,
-        ),
-        render_external_annotation_provider_report(
-            "scsa",
-            dataset_path,
-            cluster_key,
-            output_dir,
-            evidence=evidence,
-            species=species,
-            tissue=tissue,
-            sample_key=sample_key,
-            batch_key=batch_key,
-        ),
+        )
     ]
+    if _cellmarker_enabled(config):
+        provider_reports.append(
+            render_cellmarker_provider_report(
+                dataset_path,
+                cluster_key,
+                output_dir,
+                evidence=evidence,
+                database_path=cellmarker_path,
+                cache_root=cache_root,
+                species=species,
+                tissue=tissue,
+                sample_key=sample_key,
+                batch_key=batch_key,
+            )
+        )
+    if _marker_database_enabled(config, "panglaodb"):
+        provider_reports.append(
+            render_panglaodb_provider_report(
+                dataset_path,
+                cluster_key,
+                output_dir,
+                evidence=evidence,
+                database_path=panglaodb_path,
+                cache_root=cache_root,
+                species=species,
+                tissue=tissue,
+                sample_key=sample_key,
+                batch_key=batch_key,
+            )
+        )
+    if _marker_database_enabled(config, "user_markers"):
+        provider_reports.append(
+            render_user_markers_provider_report(
+                dataset_path,
+                cluster_key,
+                output_dir,
+                evidence=evidence,
+                database_path=user_markers_path,
+                cache_root=cache_root,
+                species=species,
+                tissue=tissue,
+                sample_key=sample_key,
+                batch_key=batch_key,
+            )
+        )
     provider_index_path = output_dir / "evidence_reports" / "provider_reports.json"
-    write_json(provider_index_path, {"providers": provider_reports})
+    cross_provider_summary = _write_cross_provider_summary(output_dir, evidence)
+    write_json(provider_index_path, {"providers": provider_reports, "cross_provider_summary": cross_provider_summary})
     render_draft_report(report_dir, outputs.diagnosis, outputs.annotation_cards, provider_index_path=provider_index_path)
     return outputs
+
+
+def _write_cross_provider_summary(output_dir: Path, evidence: dict[str, ClusterEvidence]) -> dict[str, Any]:
+    evidence_dir = output_dir / "evidence_reports"
+    rows = _cross_provider_rows(evidence_dir, evidence)
+    csv_path = evidence_dir / "cross_provider_summary.csv"
+    fieldnames = [
+        "cluster_id",
+        "marker_based_label",
+        "marker_based_score",
+        "cellmarker_label",
+        "cellmarker_score",
+        "cellmarker_confidence",
+        "panglaodb_label",
+        "panglaodb_score",
+        "panglaodb_confidence",
+        "user_markers_label",
+        "user_markers_score",
+        "user_markers_confidence",
+        "agreement",
+        "action",
+    ]
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    json_path = evidence_dir / "cross_provider_summary.json"
+    payload = {
+        "path": "evidence_reports/cross_provider_summary.csv",
+        "json": "evidence_reports/cross_provider_summary.json",
+        "rows": rows,
+    }
+    write_json(json_path, payload)
+    return payload
+
+
+def _cross_provider_rows(evidence_dir: Path, evidence: dict[str, ClusterEvidence]) -> list[dict[str, Any]]:
+    marker = _top_by_cluster(evidence_dir / "marker_based" / "tables" / "marker_signatures.csv", score_field="overlap_score")
+    cellmarker = _top_by_cluster(evidence_dir / "cellmarker" / "tables" / "best_database_matches.csv", score_field="score")
+    panglaodb = _top_by_cluster(evidence_dir / "panglaodb" / "tables" / "best_database_matches.csv", score_field="score")
+    user_markers = _top_by_cluster(evidence_dir / "user_markers" / "tables" / "best_database_matches.csv", score_field="score")
+    cluster_ids = sorted(
+        {str(cluster_id) for cluster_id in evidence} | set(marker) | set(cellmarker) | set(panglaodb) | set(user_markers),
+        key=_cluster_sort_key,
+    )
+    rows: list[dict[str, Any]] = []
+    for cluster_id in cluster_ids:
+        labels = [
+            marker.get(cluster_id, {}).get("label", ""),
+            cellmarker.get(cluster_id, {}).get("label", ""),
+            panglaodb.get(cluster_id, {}).get("label", ""),
+            user_markers.get(cluster_id, {}).get("label", ""),
+        ]
+        agreement = _agreement(labels)
+        rows.append(
+            {
+                "cluster_id": cluster_id,
+                "marker_based_label": marker.get(cluster_id, {}).get("label", ""),
+                "marker_based_score": marker.get(cluster_id, {}).get("score", ""),
+                "cellmarker_label": cellmarker.get(cluster_id, {}).get("label", ""),
+                "cellmarker_score": cellmarker.get(cluster_id, {}).get("score", ""),
+                "cellmarker_confidence": cellmarker.get(cluster_id, {}).get("confidence", ""),
+                "panglaodb_label": panglaodb.get(cluster_id, {}).get("label", ""),
+                "panglaodb_score": panglaodb.get(cluster_id, {}).get("score", ""),
+                "panglaodb_confidence": panglaodb.get(cluster_id, {}).get("confidence", ""),
+                "user_markers_label": user_markers.get(cluster_id, {}).get("label", ""),
+                "user_markers_score": user_markers.get(cluster_id, {}).get("score", ""),
+                "user_markers_confidence": user_markers.get(cluster_id, {}).get("confidence", ""),
+                "agreement": agreement,
+                "action": _agreement_action(agreement),
+            }
+        )
+    return rows
+
+
+def _top_by_cluster(path: Path, *, score_field: str) -> dict[str, dict[str, str]]:
+    if not path.exists():
+        return {}
+    rows: dict[str, dict[str, str]] = {}
+    try:
+        with path.open(newline="", encoding="utf-8") as handle:
+            for row in csv.DictReader(handle):
+                cluster_id = str(row.get("cluster_id", ""))
+                if not cluster_id:
+                    continue
+                current = rows.get(cluster_id)
+                score = _float(row.get(score_field))
+                if current is None or score > _float(current.get("score")):
+                    rows[cluster_id] = {
+                        "label": str(row.get("label", "")),
+                        "score": str(row.get(score_field, "")),
+                        "confidence": str(row.get("confidence", "")),
+                    }
+    except Exception:
+        return {}
+    return rows
+
+
+def _agreement(labels: list[str]) -> str:
+    present = [_canonical_label(label) for label in labels if label]
+    informative = [label for label in present if label and label not in {"normal cell", "cancer cell"}]
+    if len(informative) < 2:
+        return "insufficient"
+    if len(set(informative)) == 1:
+        return "high"
+    broad_groups = {_broad_label_group(label) for label in informative}
+    if len(broad_groups) == 1:
+        return "lineage"
+    return "mixed"
+
+
+def _agreement_action(agreement: str) -> str:
+    if agreement == "high":
+        return "Accept if marker evidence is biologically plausible"
+    if agreement == "lineage":
+        return "Review subtype granularity"
+    if agreement == "mixed":
+        return "Review provider conflicts"
+    return "Review; database support is weak or missing"
+
+
+def _canonical_label(label: str) -> str:
+    text = str(label or "").lower().replace("+", " positive ")
+    for char in "-_/(),":
+        text = text.replace(char, " ")
+    words = [word[:-1] if word.endswith("s") and len(word) > 3 else word for word in text.split()]
+    return " ".join(words)
+
+
+def _broad_label_group(label: str) -> str:
+    text = _canonical_label(label)
+    if "platelet" in text or "megakaryocyte" in text:
+        return "platelet"
+    if "monocyte" in text or "macrophage" in text or "dendritic" in text:
+        return "myeloid"
+    if " t cell" in f" {text}" or text.startswith("t cell") or "nk cell" in text:
+        return "t_nk"
+    if "b cell" in text or "plasma" in text:
+        return "b_cell"
+    if "erythroid" in text:
+        return "erythroid"
+    return text
+
+
+def _float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _cluster_sort_key(value: Any) -> tuple[int, Any]:
+    text = str(value)
+    try:
+        return (0, int(text))
+    except ValueError:
+        return (1, text)
+
+
+def _cellmarker_enabled(config: dict[str, Any]) -> bool:
+    return _marker_database_enabled(config, "cellmarker")
+
+
+def _marker_database_enabled(config: dict[str, Any], provider_id: str) -> bool:
+    methods = config.get("methods", {})
+    marker_databases = methods.get("marker_databases", {}) if isinstance(methods, dict) else {}
+    if not isinstance(marker_databases, dict):
+        return False
+    return marker_databases.get(provider_id) is True
+
+
+def _optional_path(value: Any) -> Path | None:
+    text = str(value or "").strip()
+    return Path(text) if text else None
 
 
 def finalize_run(run_dir: Path, output_dir: Path, *, write_h5ad: bool = False) -> FinalOutputs:
@@ -415,18 +600,14 @@ def build_annotation_cards(
 def _build_card(cluster_id: str, cell_count: int, ev: ClusterEvidence | None) -> dict[str, Any]:
     markers = ev.markers if ev else []
     marker_signatures = ev.marker_signatures if ev else []
-    celltypist_label = ev.celltypist_label if ev else None
-    celltypist_prob = ev.celltypist_prob if ev else None
-    ref_matches = ev.reference_matches if ev else []
+    marker_db_matches = ev.reference_matches if ev else []
     qc_warnings = ev.qc_warnings if ev else []
 
     proposed_label, decision, confidence, reasoning, uncertainty = _assign_annotation(
         cluster_id=cluster_id,
         cell_count=cell_count,
         markers=markers,
-        celltypist_label=celltypist_label,
-        celltypist_prob=celltypist_prob,
-        ref_matches=ref_matches,
+        marker_db_matches=marker_db_matches,
         qc_warnings=qc_warnings,
     )
 
@@ -438,12 +619,8 @@ def _build_card(cluster_id: str, cell_count: int, ev: ClusterEvidence | None) ->
         "evidence": {
             "markers": [m.to_dict() for m in markers[:10]],
             "marker_signatures": marker_signatures[:5],
-            "models": (
-                [{"model": "CellTypist", "label": celltypist_label, "probability": celltypist_prob}]
-                if celltypist_label
-                else []
-            ),
-            "references": ref_matches[:3],
+            "models": [],
+            "references": marker_db_matches[:3],
             "ontology": [],
             "qc": ev.qc_metrics if ev else {},
             "composition": ev.composition if ev else {},
@@ -453,8 +630,8 @@ def _build_card(cluster_id: str, cell_count: int, ev: ClusterEvidence | None) ->
         "reasoning": reasoning,
         "provenance": {
             "parameters": {},
-            "models": ["CellTypist"] if celltypist_label else [],
-            "references": [m["ref_id"] for m in ref_matches[:3]],
+            "models": [],
+            "references": [m["ref_id"] for m in marker_db_matches[:3]],
             "cell_count": cell_count,
         },
     }
@@ -464,9 +641,7 @@ def _assign_annotation(
     cluster_id: str,
     cell_count: int,
     markers: list,
-    celltypist_label: str | None,
-    celltypist_prob: float | None,
-    ref_matches: list[dict[str, Any]],
+    marker_db_matches: list[dict[str, Any]],
     qc_warnings: list[str] | None = None,
 ) -> tuple[str | None, str, dict[str, str], dict[str, Any], dict[str, str]]:
     supports: list[str] = []
@@ -493,56 +668,35 @@ def _assign_annotation(
     else:
         uncertainties.append("No marker evidence computed yet. Run with a real h5ad dataset.")
 
-    # --- model evidence ---
-    model_confidence = "unknown"
-    if celltypist_label and celltypist_prob is not None:
-        if celltypist_prob >= 0.75:
-            model_confidence = "high"
-            supports.append(f"CellTypist predicts '{celltypist_label}' (majority vote {celltypist_prob:.0%})")
-        elif celltypist_prob >= 0.50:
-            model_confidence = "medium"
-            supports.append(f"CellTypist suggests '{celltypist_label}' ({celltypist_prob:.0%} majority)")
-        else:
-            model_confidence = "low"
-            uncertainties.append(f"CellTypist shows ambiguous vote for '{celltypist_label}' ({celltypist_prob:.0%})")
-    else:
-        uncertainties.append("No CellTypist prediction available for this cluster.")
-
-    # --- reference evidence ---
-    ref_confidence = "unknown"
-    best_ref = ref_matches[0] if ref_matches else None
-    if best_ref and best_ref["jaccard"] >= 0.20:
-        ref_confidence = "high"
+    # --- marker database evidence ---
+    db_confidence = "unknown"
+    best_db = marker_db_matches[0] if marker_db_matches else None
+    if best_db and best_db["jaccard"] >= 0.20:
+        db_confidence = "high"
         supports.append(
-            f"Reference '{best_ref['ref_id']}' matches cell type '{best_ref['label']}' "
-            f"(Jaccard {best_ref['jaccard']:.2f}, {best_ref['n_shared']} shared genes)"
+            f"Marker database '{best_db['ref_id']}' supports '{best_db['label']}' "
+            f"(Jaccard {best_db['jaccard']:.2f}, {best_db['n_shared']} shared genes)"
         )
-    elif best_ref and best_ref["jaccard"] >= 0.08:
-        ref_confidence = "medium"
+    elif best_db and best_db["jaccard"] >= 0.08:
+        db_confidence = "medium"
         supports.append(
-            f"Weak reference match: '{best_ref['label']}' from '{best_ref['ref_id']}' "
-            f"(Jaccard {best_ref['jaccard']:.2f})"
+            f"Moderate marker database support for '{best_db['label']}' from '{best_db['ref_id']}' "
+            f"(Jaccard {best_db['jaccard']:.2f})"
         )
-    elif ref_matches:
-        ref_confidence = "low"
-        uncertainties.append("All reference matches have Jaccard < 0.08; identity is uncertain.")
+    elif marker_db_matches:
+        db_confidence = "low"
+        uncertainties.append("All marker database overlaps have Jaccard < 0.08; identity is uncertain.")
     else:
-        uncertainties.append("No reference datasets were matched against this cluster.")
+        uncertainties.append("No marker database support was available for this cluster.")
 
     # --- proposed label ---
     proposed_label: str | None = None
-    if celltypist_label:
-        proposed_label = celltypist_label
-    elif best_ref and best_ref["jaccard"] >= 0.10:
-        proposed_label = best_ref["label"]
+    if best_db and best_db["jaccard"] >= 0.10:
+        proposed_label = best_db["label"]
 
     # --- overall confidence ---
     level_rank = {"high": 3, "medium": 2, "low": 1, "unknown": 0}
-    min_rank = min(level_rank[marker_lineage], level_rank[model_confidence], level_rank[ref_confidence])
-    max_rank = max(level_rank[marker_lineage], level_rank[model_confidence], level_rank[ref_confidence])
-    avg_rank = (level_rank[marker_lineage] + level_rank[model_confidence] + level_rank[ref_confidence]) / 3
-
-    rank_to_level = {3: "high", 2: "medium", 1: "low", 0: "unknown"}
+    avg_rank = (level_rank[marker_lineage] + level_rank[db_confidence]) / 2
 
     if avg_rank >= 2.5:
         overall = "high"
@@ -552,14 +706,6 @@ def _assign_annotation(
         overall = "low"
     else:
         overall = "unknown"
-
-    # flag contradictions between evidence sources
-    if celltypist_label and best_ref and best_ref["jaccard"] >= 0.10:
-        if celltypist_label.lower() != best_ref["label"].lower():
-            contradictions.append(
-                f"CellTypist suggests '{celltypist_label}' but best reference match is '{best_ref['label']}'"
-            )
-            overall = "low" if overall == "medium" else overall
 
     # --- artifact override ---
     if cell_count < 10:
@@ -576,14 +722,14 @@ def _assign_annotation(
     elif artifact_qc_warnings:
         decision = "Artifact warning"
         summary = f"Cluster {cluster_id} has QC evidence consistent with a potential artifact."
-    elif not markers and not celltypist_label and not ref_matches:
+    elif not markers and not marker_db_matches:
         decision = "Needs review"
         summary = f"Cluster {cluster_id}: no evidence has been computed yet."
     elif contradictions:
         decision = "Ambiguous"
         summary = (
             f"Cluster {cluster_id}: evidence sources disagree. "
-            f"Review marker genes and reference matches carefully."
+            f"Review marker genes and marker database matches carefully."
         )
     elif overall == "high" and proposed_label:
         decision = "Accepted"
@@ -609,10 +755,10 @@ def _assign_annotation(
     else:
         suggestions.append("Run with a real h5ad file to obtain marker genes for literature validation.")
 
-    confidence = {"lineage": marker_lineage, "subtype": ref_confidence, "overall": overall}
+    confidence = {"lineage": marker_lineage, "subtype": db_confidence, "overall": overall}
     uncertainty = {
-        "model_disagreement": "high" if contradictions else "low" if celltypist_label else "unknown",
-        "reference_distance": "low" if (best_ref and best_ref["jaccard"] >= 0.20) else "high" if best_ref else "unknown",
+        "provider_disagreement": "unknown",
+        "marker_database_distance": "low" if (best_db and best_db["jaccard"] >= 0.20) else "high" if best_db else "unknown",
         "marker_inconsistency": "low" if len(strong_markers) >= 5 else "high" if not markers else "medium",
         "qc_artifact": "high" if artifact_qc_warnings else "low" if qc_warnings else "unknown",
     }

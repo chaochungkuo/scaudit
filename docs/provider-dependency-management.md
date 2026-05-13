@@ -2,26 +2,26 @@
 
 scaudit uses `pixi` as the source of truth for reproducible development and provider execution environments.
 
+Reusable provider data is stored under the global scaudit cache root. The default is `~/.cache/scaudit`, overridable with `[cache].dir` in config or the `SCAUDIT_CACHE_DIR` environment variable. Providers should download only when a required cache artifact is missing; second and later runs should reuse the existing file and record checksum/provenance in provider JSON.
+
 ## Dependency Boundaries
 
 Keep dependencies grouped by provider execution style:
 
 | Provider family | Examples | Pixi location | Notes |
 | --- | --- | --- | --- |
-| Core Python reports | `marker_based`, `reference_mapping`, `sctype`, `sccatch`, `scsa`, future comparison reports | default environment | Uses `scanpy`, `anndata`, `scikit-learn`, `quarto`, `pandas`, `matplotlib`, `seaborn`, and notebook rendering packages. ScType/scCATCH/SCSA currently run executable scaudit-native style adapters. |
-| R-backed official tools | future exact `sctype` or `sccatch` execution | `provider-r` environment | R runtime and common table/JSON packages are isolated from the default Python environment. Use this only after the exact official package/script/database source is pinned. |
-| Python-backed external tools | future exact `scsa` CLI/package execution | provider-specific pixi feature, to be added with implementation | Add only after the exact maintained package or CLI entry point is selected and tested. |
-| Database-backed marker evidence | `cellmarker`, `panglaodb` | default environment plus data-cache tasks | Treat database files as versioned data artifacts, not package dependencies. Store database name, version/date, URL, checksum, and local cache path in the provider JSON. |
+| Core Python reports | `marker_based`, future marker comparison reports | default environment | Uses `scanpy`, `anndata`, `scikit-learn`, `quarto`, `pandas`, `matplotlib`, `seaborn`, and notebook rendering packages. |
+| External marker tools | `sctype`, `sccatch`, `scsa` | out of scope | These providers are intentionally skipped for the marker-based final check. Simulated predictions are not allowed. |
+| Database-backed marker evidence | `cellmarker`, `panglaodb`, `user_markers` | default environment plus data-cache tasks | Treat database files as versioned data artifacts, not package dependencies. Store database name, version/date, URL or local source, checksum, and local path in the provider JSON. |
 
 ## Current Pixi Environments
 
 ```bash
 pixi run test
 pixi run scaudit --help
-pixi run --environment provider-r R --version
 ```
 
-The default environment should remain usable for the normal Python CLI and report rendering. The current ScType/scCATCH/SCSA reports execute in the default environment through transparent scaudit-native adapters. The `provider-r` environment exists for future exact R-backed execution and should not be required for default runs unless those official backends are enabled.
+The default environment should remain usable for the normal Python CLI and report rendering. ScType/scCATCH/SCSA are intentionally skipped and must not emit predictions unless official backend work is explicitly resumed later.
 
 ## Adding A New Provider Dependency
 
@@ -38,10 +38,8 @@ When adding a provider, update dependencies in this order:
 
 | Provider | Dependency plan |
 | --- | --- |
-| `sctype` | Current backend is an executable scaudit-native ScType-style marker scoring adapter in the default environment. If exact ScType execution is added later, use `provider-r` and record the exact script/database provenance in `sctype.evidence.json`. |
-| `sccatch` | Current backend is an executable scaudit-native scCATCH-style marker matching adapter in the default environment. If exact scCATCH execution is added later, use `provider-r` and record tissue parameter, database version, and thresholds. |
-| `scsa` | Current backend is an executable scaudit-native SCSA-style weighted marker scoring adapter in the default environment. If exact SCSA execution is added later, first choose a maintained CLI/package source, then create a dedicated pixi feature if needed. |
-| `cellmarker` | Database provider. Add a data download/cache task with checksum and database release date. No separate runtime package should be required beyond core Python table processing. |
-| `panglaodb` | Database provider. Same pattern as `cellmarker`: cache the marker table with provenance and checksum, then score through scaudit code. |
+| `cellmarker` | Database provider. Reads an explicit local CellMarker table when configured; otherwise downloads the species-specific table to the global cache, records checksum/provenance, and scores marker overlap through the shared marker database provider engine. |
+| `panglaodb` | Database provider. Reads an explicit local PanglaoDB marker table when configured; otherwise downloads the marker table to the global cache, records checksum/provenance, and scores marker overlap through the shared marker database provider engine. |
+| `user_markers` | Database provider. Reads a user-supplied CSV/TSV marker list from an explicit local path, records checksum/provenance, and scores marker overlap through the shared marker database provider engine. |
 
 Provider reports should remain self-contained and runnable, but the dependency layer should stay explicit: the report tells readers which pixi environment, tool/package, command/function, parameters, and database version produced the results.

@@ -700,7 +700,7 @@ details.code-fold > summary {{
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  border: 1px solid #8da2c0;
+  border: 0;
   border-radius: 6px;
   padding: 0.25rem 0.65rem;
   margin: 0.35rem 0;
@@ -711,31 +711,95 @@ details.code-fold > summary {{
   cursor: pointer;
 }}
 
+pre,
+div.sourceCode {{
+  border: 0 !important;
+  box-shadow: none !important;
+}}
+
 details.code-fold[open] > summary {{
   background: #e8eef8;
 }}
 
 .scaudit-table {{
   border-collapse: collapse;
+  border: 0;
+  border-color: transparent;
   width: 100%;
   font-size: 0.92rem;
 }}
 
+.table,
+.dataframe,
+table {{
+  --bs-table-border-color: transparent;
+  --bs-table-striped-bg: transparent;
+  --bs-table-bg: transparent;
+  --bs-border-color: transparent;
+  border: 0 !important;
+  border-width: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}}
+
+.table > :not(caption) > * > *,
+.dataframe > :not(caption) > * > *,
+table > :not(caption) > * > *,
+table th,
+table td,
+thead,
+tbody,
+tr {{
+  border: 0 !important;
+  border-width: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}}
+
+.table *,
+.dataframe *,
+table * {{
+  border: 0 !important;
+  border-width: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}}
+
+.table-striped > tbody > tr:nth-of-type(odd) > * {{
+  --bs-table-accent-bg: transparent;
+}}
+
 .scaudit-table th,
 .scaudit-table td {{
-  border-bottom: 1px solid #e1e7ef;
+  border: 0;
   padding: 0.35rem 0.45rem;
   vertical-align: top;
 }}
 
 .scaudit-table tbody tr:last-child td {{
-  border-bottom: 0;
+  border-bottom: 0 !important;
 }}
 
 .scaudit-table th {{
   background: #f4f7fb;
   color: #18324a;
   font-weight: 700;
+}}
+
+figure,
+.figure,
+.quarto-figure,
+.cell-output-display,
+.scaudit-table {{
+  border: 0 !important;
+  box-shadow: none !important;
+}}
+
+figure img,
+.quarto-figure img,
+.cell-output-display img {{
+  border: 0 !important;
+  box-shadow: none !important;
 }}
 
 .cluster-signature-table {{
@@ -747,11 +811,25 @@ details.code-fold[open] > summary {{
 }}
 
 .panel-tabset .tab-content {{
-  border: 0;
+  border: 0 !important;
+  box-shadow: none !important;
 }}
 
 .panel-tabset .nav-tabs {{
-  border-bottom: 0;
+  border: 0 !important;
+  border-bottom: 0 !important;
+  box-shadow: none !important;
+}}
+
+.panel-tabset,
+.panel-tabset .tab-pane,
+.panel-tabset .nav-item,
+.panel-tabset .nav-tabs .nav-link,
+.panel-tabset .nav-tabs .nav-link.active {{
+  border: 0 !important;
+  border-width: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
 }}
 
 .marker-signature-workspace {{
@@ -787,7 +865,7 @@ details.code-fold[open] > summary {{
 }}
 
 .signature-gene-block {{
-  border-top: 1px solid #e8edf5;
+  border: 0;
   margin-top: 0.65rem;
   padding-top: 0.55rem;
 }}

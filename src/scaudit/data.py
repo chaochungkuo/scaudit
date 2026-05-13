@@ -278,7 +278,7 @@ def compute_cluster_evidence(
     sample_key: str = "",
     batch_key: str = "",
 ) -> dict[str, ClusterEvidence]:
-    """Compute per-cluster evidence: markers, CellTypist labels, reference matches."""
+    """Compute per-cluster marker evidence and marker database overlaps."""
     if not path.exists() or importlib.util.find_spec("anndata") is None:
         return {}
 
@@ -302,7 +302,6 @@ def compute_cluster_evidence(
     _fill_qc_evidence(adata, cluster_key, evidence)
     _fill_composition_evidence(adata, cluster_key, evidence, sample_key=sample_key, batch_key=batch_key)
     _fill_marker_db_evidence(evidence)
-    _fill_celltypist_evidence(adata, cluster_key, evidence)
     if reference_registry_path and reference_registry_path.exists():
         _fill_reference_evidence(evidence, reference_registry_path, query_gene_id_type)
 
@@ -486,7 +485,6 @@ def _fill_marker_db_evidence(evidence: dict[str, ClusterEvidence]) -> None:
         if not query_genes:
             continue
         db_matches = lookup_cell_type(query_genes)
-        # Prepend builtin matches before any reference h5ad matches (added later)
         ev.reference_matches = db_matches + ev.reference_matches
 
 

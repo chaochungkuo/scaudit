@@ -27,24 +27,27 @@ ortholog_map = "none"
 min_gene_overlap_warning = 0.70
 min_gene_overlap_strong_warning = 0.50
 
-[references]
-auto_select = true
-max_references = 3
-registry = "default"
-cache_dir = "references"
-selected = []
-allow_condition_mismatch = true
-require_species_match = true
+[cache]
+dir = "~/.cache/scaudit"
+
+[marker_databases.cellmarker]
+path = ""
+
+[marker_databases.panglaodb]
+path = ""
+
+[marker_databases.user_markers]
+path = ""
+name = "User marker genes"
 
 [methods]
 marker_based = true
-reference_based = false
 ontology_based = false
 
-[methods.model_based]
-celltypist = false
-scanvi = false
-scvi = false
+[methods.marker_databases]
+cellmarker = true
+panglaodb = false
+user_markers = false
 
 [methods.qc]
 enabled = true
@@ -154,6 +157,11 @@ def validate_config(path: Path) -> list[ValidationItem]:
         else:
             items.append(ValidationItem("output.dir", "ERROR", "output.dir is required"))
 
+    cache = config.get("cache")
+    if isinstance(cache, dict):
+        cache_dir = str(cache.get("dir", "") or "").strip()
+        items.append(ValidationItem("cache.dir", "OK" if cache_dir else "WARN", cache_dir or "default ~/.cache/scaudit"))
+
     methods = config.get("methods")
     if not isinstance(methods, dict):
         items.append(ValidationItem("methods", "ERROR", "missing [methods] section"))
@@ -163,26 +171,13 @@ def validate_config(path: Path) -> list[ValidationItem]:
         else:
             items.append(ValidationItem("methods.marker_based", "WARN", "disabled; MVP expects marker evidence"))
 
-        model_based = methods.get("model_based", {})
-        if isinstance(model_based, dict):
-            enabled = [name for name, active in model_based.items() if active is True]
-            if enabled:
-                items.append(ValidationItem("methods.model_based", "OK", ", ".join(enabled)))
+        marker_databases = methods.get("marker_databases", {})
+        if isinstance(marker_databases, dict):
+            enabled_databases = [name for name, active in marker_databases.items() if active is True]
+            if enabled_databases:
+                items.append(ValidationItem("methods.marker_databases", "OK", ", ".join(enabled_databases)))
             else:
-                items.append(ValidationItem("methods.model_based", "OK", "no optional model enabled"))
-
-    references = config.get("references")
-    if isinstance(references, dict):
-        selected = references.get("selected", [])
-        if selected:
-            items.append(ValidationItem("references.selected", "OK", ", ".join(map(str, selected))))
-        elif references.get("auto_select", False):
-            items.append(ValidationItem("references", "OK", "auto_select enabled"))
-        else:
-            items.append(ValidationItem("references", "WARN", "no references selected"))
-    else:
-        items.append(ValidationItem("references", "WARN", "missing [references] section"))
-
+                items.append(ValidationItem("methods.marker_databases", "OK", "marker databases disabled"))
     return items
 
 
@@ -195,19 +190,17 @@ def build_plan(config_path: Path) -> Plan:
     dataset = config.get("dataset", {})
     output = config.get("output", {})
     methods = config.get("methods", {})
-    model_based = methods.get("model_based", {}) if isinstance(methods, dict) else {}
+    marker_databases = methods.get("marker_databases", {}) if isinstance(methods, dict) else {}
     output_dir = str(output.get("dir", "results")) if isinstance(output, dict) else "results"
 
     method_items = [
         ValidationItem("marker evidence", "OK" if methods.get("marker_based") else "SKIPPED", "Scanpy marker ranking"),
-        ValidationItem("reference audit", "OK" if methods.get("reference_based") else "SKIPPED", "reference evidence"),
     ]
-    if isinstance(model_based, dict):
-        for name in ("celltypist", "scanvi", "scvi"):
+    if isinstance(marker_databases, dict):
+        for name in ("cellmarker", "panglaodb", "user_markers"):
             method_items.append(
-                ValidationItem(name, "OK" if model_based.get(name) else "SKIPPED", "optional model adapter")
+                ValidationItem(name, "OK" if marker_databases.get(name) else "SKIPPED", "marker database provider")
             )
-
     outputs = [
         f"{output_dir}/annotation_cards.json",
         f"{output_dir}/annotation_summary.csv",

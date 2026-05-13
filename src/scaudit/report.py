@@ -137,26 +137,28 @@ def _write_report_html(
     counts = _decision_counts(cards)
     attention = [c for c in cards if c.get("decision") in _NEEDS_ATTENTION]
 
-    metrics = (
-        _metric("Cells", n_cells)
-        + _metric("Genes", n_genes)
-        + _metric("Clusters", n_clusters)
-        + _metric("Needs attention", len(attention), highlight=len(attention) > 0)
-    )
-
+    overview_html = _run_overview_section(diagnosis, cards, attention)
     umap_html = _umap_section(cards, diagnosis) if cards else ""
-    provider_html = _provider_reports_section(path.parent, provider_index or {}, provider_index_path) if provider_index else ""
-    stack_html = _evidence_stack_section(cards) if cards else ""
-    completeness_html = _evidence_completeness_section(cards) if cards else ""
-    reference_html = _reference_match_section(cards) if cards else ""
-    marker_html = _marker_expression_section(cards) if cards else ""
-    attention_html = _attention_panel(attention) if attention else ""
+    workflow_html = _workflow_section(provider_index or {})
+    provider_html = _provider_status_table(path.parent, provider_index or {}, provider_index_path) if provider_index else ""
+    cross_provider_html = _cross_provider_summary_section(path.parent, provider_index or {}, provider_index_path) if provider_index else ""
+    priority_html = _review_priorities_section(cards)
+    artifacts_html = _artifact_navigation_section(path.parent, provider_index or {}, provider_index_path)
     warning_html = _warning_list(warnings) if warnings else ""
-    clusters_html = _cluster_list(cards)
     methods_html = _methods_section(diagnosis)
 
     body = f"""
-    <section class="hero">
+    <nav class="report-toc" aria-label="Report navigation">
+      <a href="#overview">Overview</a>
+      <a href="#cluster-overview">UMAP</a>
+      <a href="#workflow">Workflow</a>
+      <a href="#providers">Providers</a>
+      <a href="#cross-provider">Comparison</a>
+      <a href="#review-priorities">Review</a>
+      <a href="#artifacts">Artifacts</a>
+      <a href="#methods">Methods</a>
+    </nav>
+    <section class="hero audit-hero">
       <p class="eyebrow">{html.escape(label)}</p>
       <h1>scaudit report</h1>
       <p class="dataset-path">Dataset: <code>{html.escape(str(dataset_path))}</code></p>
@@ -164,16 +166,14 @@ def _write_report_html(
         {"".join(_decision_pill(lbl, count) for lbl, count in counts.items() if count > 0)}
       </div>
     </section>
-    <div class="metrics-grid">{metrics}</div>
+    {overview_html}
     {umap_html}
+    {workflow_html}
     {provider_html}
-    {stack_html}
-    {completeness_html}
-    {reference_html}
-    {marker_html}
-    {attention_html}
+    {cross_provider_html}
+    {priority_html}
+    {artifacts_html}
     {warning_html}
-    {clusters_html}
     {methods_html}
     """
 
@@ -234,6 +234,275 @@ def _provider_reports_section(report_dir: Path, provider_index: dict[str, Any], 
     """
 
 
+def _run_overview_section(diagnosis: dict[str, Any], cards: list[dict[str, Any]], attention: list[dict[str, Any]]) -> str:
+    metrics = (
+        _metric("Cells", diagnosis.get("n_obs") or "—")
+        + _metric("Genes", diagnosis.get("n_vars") or "—")
+        + _metric("Clusters", diagnosis.get("cluster_count") or len(cards) or "—")
+        + _metric("Needs attention", len(attention), highlight=len(attention) > 0)
+    )
+    rows = [
+        ("Species", diagnosis.get("species") or "—"),
+        ("Tissue", diagnosis.get("tissue") or "—"),
+        ("Cluster key", diagnosis.get("cluster_key") or "—"),
+        ("Gene ID type", diagnosis.get("gene_id_type") or "—"),
+    ]
+    row_html = "".join(f"<tr><th>{html.escape(label)}</th><td>{html.escape(str(value))}</td></tr>" for label, value in rows)
+    return f"""
+    <section id="overview" class="audit-section overview-section">
+      <div class="section-header">
+        <h2>Run overview</h2>
+        <span class="muted">Dataset and review scope</span>
+      </div>
+      <div class="metrics-grid compact-metrics">{metrics}</div>
+      <table class="info-table overview-table"><tbody>{row_html}</tbody></table>
+    </section>
+    """
+
+
+def _workflow_section(provider_index: dict[str, Any]) -> str:
+    providers = provider_index.get("providers") if isinstance(provider_index, dict) else []
+    if not isinstance(providers, list):
+        providers = []
+    active_ids = {str(provider.get("id")) for provider in providers if isinstance(provider, dict)}
+    steps = [
+        ("1", "Raw markers", "Rank genes per cluster and summarize marker strength.", "marker_based" in active_ids),
+        ("2", "Marker databases", "Compare cluster markers with curated and user-defined marker databases.", any(pid in active_ids for pid in ("cellmarker", "panglaodb", "user_markers"))),
+        ("3", "Human review", "Route ambiguous or weak marker evidence to reviewer action.", True),
+    ]
+    step_html = "".join(_workflow_step(*step) for step in steps)
+    return f"""
+    <section id="workflow" class="audit-section workflow-section">
+      <div class="section-header">
+        <h2>Evidence workflow</h2>
+        <span class="muted">What each stage contributes</span>
+      </div>
+      <div class="workflow-steps">{step_html}</div>
+    </section>
+    """
+
+
+def _workflow_step(number: str, title: str, text: str, active: bool) -> str:
+    state = "Active" if active else "Not configured"
+    css = "is-active" if active else "is-muted"
+    return (
+        f'<article class="workflow-step {css}">'
+        f'<span class="workflow-number">{html.escape(number)}</span>'
+        f'<div><h3>{html.escape(title)}</h3><p>{html.escape(text)}</p><span>{html.escape(state)}</span></div>'
+        f"</article>"
+    )
+
+
+def _provider_status_table(report_dir: Path, provider_index: dict[str, Any], provider_index_path: Path | None) -> str:
+    providers = provider_index.get("providers") if isinstance(provider_index, dict) else []
+    if not isinstance(providers, list) or not providers:
+        return ""
+    output_dir = provider_index_path.parent.parent if provider_index_path else report_dir.parent
+    rows = []
+    for provider in providers:
+        if not isinstance(provider, dict):
+            continue
+        provider_id = str(provider.get("id") or "")
+        name = str(provider.get("name") or provider_id or "Provider")
+        status = str(provider.get("status") or "unknown")
+        purpose = str(provider.get("purpose") or "")
+        finding = str(provider.get("top_finding") or "")
+        warning_count = len(provider.get("warnings") or [])
+        html_target = str(provider.get("html") or "")
+        json_target = str(provider.get("json") or "")
+        html_href = _relative_report_link(report_dir, output_dir / html_target) if html_target else ""
+        json_href = _relative_report_link(report_dir, output_dir / json_target) if json_target else ""
+        links = []
+        if html_href:
+            links.append(f'<a href="{html.escape(html_href)}">Report</a>')
+        if json_href:
+            links.append(f'<a href="{html.escape(json_href)}">JSON</a>')
+        rows.append(
+            "<tr>"
+            f"<td><strong>{html.escape(name)}</strong><br><span class=\"muted\">{html.escape(purpose)}</span></td>"
+            f"<td>{_status_badge(status)}</td>"
+            f"<td>{html.escape(finding)}</td>"
+            f"<td>{html.escape(str(warning_count))}</td>"
+            f"<td>{' · '.join(links)}</td>"
+            "</tr>"
+        )
+    return f"""
+    <section id="providers" class="audit-section provider-status-section">
+      <div class="section-header">
+        <h2>Provider status</h2>
+        <span class="muted">Focused reports hold method-level detail</span>
+      </div>
+      <div class="table-wrap">
+        <table class="audit-table provider-status-table">
+          <thead><tr><th>Provider</th><th>Status</th><th>Top finding</th><th>Warnings</th><th>Open</th></tr></thead>
+          <tbody>{''.join(rows)}</tbody>
+        </table>
+      </div>
+    </section>
+    """
+
+
+def _status_badge(status: str) -> str:
+    normalized = status.lower().strip() or "unknown"
+    return f'<span class="status-badge status-{html.escape(normalized)}">{html.escape(status)}</span>'
+
+
+def _cross_provider_summary_section(report_dir: Path, provider_index: dict[str, Any], provider_index_path: Path | None) -> str:
+    summary = provider_index.get("cross_provider_summary") if isinstance(provider_index, dict) else {}
+    rows = summary.get("rows") if isinstance(summary, dict) else []
+    if not isinstance(rows, list) or not rows:
+        return ""
+    csv_href = ""
+    if provider_index_path and isinstance(summary, dict) and summary.get("path"):
+        csv_href = _relative_report_link(report_dir, provider_index_path.parent.parent / str(summary.get("path")))
+    body = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        body.append(
+            "<tr>"
+            f"<td>Cluster {html.escape(str(row.get('cluster_id', '')))}</td>"
+            f"<td>{_provider_label_cell(row.get('marker_based_label'), row.get('marker_based_score'))}</td>"
+            f"<td>{_provider_label_cell(row.get('cellmarker_label'), row.get('cellmarker_score'), row.get('cellmarker_confidence'))}</td>"
+            f"<td>{_provider_label_cell(row.get('panglaodb_label'), row.get('panglaodb_score'), row.get('panglaodb_confidence'))}</td>"
+            f"<td>{_provider_label_cell(row.get('user_markers_label'), row.get('user_markers_score'), row.get('user_markers_confidence'))}</td>"
+            f"<td>{_agreement_badge(str(row.get('agreement') or 'insufficient'))}</td>"
+            f"<td>{html.escape(str(row.get('action') or 'Review'))}</td>"
+            "</tr>"
+        )
+    link = f'<a href="{html.escape(csv_href)}">CSV</a>' if csv_href else ""
+    return f"""
+    <section id="cross-provider" class="audit-section cross-provider-section">
+      <div class="section-header">
+        <h2>Cross-provider summary</h2>
+        <span class="muted">Cluster-level comparison across marker-based and database evidence {link}</span>
+      </div>
+      <div class="table-wrap">
+        <table class="audit-table cross-provider-table">
+          <thead><tr><th>Cluster</th><th>Marker-based</th><th>CellMarker</th><th>PanglaoDB</th><th>User markers</th><th>Agreement</th><th>Action</th></tr></thead>
+          <tbody>{''.join(body)}</tbody>
+        </table>
+      </div>
+    </section>
+    """
+
+
+def _provider_label_cell(label: Any, score: Any, confidence: Any = "") -> str:
+    label_text = str(label or "").strip()
+    if not label_text:
+        return '<span class="muted">Missing</span>'
+    meta = []
+    if str(score or "").strip():
+        meta.append(f"score {score}")
+    if str(confidence or "").strip():
+        meta.append(str(confidence))
+    meta_html = f'<br><span class="muted">{html.escape("; ".join(meta))}</span>' if meta else ""
+    return f"<strong>{html.escape(label_text)}</strong>{meta_html}"
+
+
+def _agreement_badge(agreement: str) -> str:
+    normalized = agreement.lower().strip() or "insufficient"
+    labels = {
+        "high": "High",
+        "lineage": "Lineage",
+        "mixed": "Mixed",
+        "insufficient": "Insufficient",
+    }
+    return f'<span class="agreement-badge agreement-{html.escape(normalized)}">{html.escape(labels.get(normalized, agreement))}</span>'
+
+
+def _review_priorities_section(cards: list[dict[str, Any]]) -> str:
+    if not cards:
+        return ""
+    rows = []
+    for card in cards:
+        cluster_id = str(card.get("cluster_id", ""))
+        proposed = str(card.get("proposed_label") or "pending")
+        decision = str(card.get("decision") or "")
+        confidence = card.get("confidence", {})
+        overall = str(confidence.get("overall") or "—")
+        evidence = card.get("evidence", {})
+        markers = evidence.get("markers") or []
+        marker_text = _top_marker_text(markers)
+        reasoning = card.get("reasoning", {})
+        uncertainties = reasoning.get("uncertainties") or []
+        action = _review_action(card)
+        rows.append(
+            "<tr>"
+            f'<td><a href="review.html">Cluster {html.escape(cluster_id)}</a></td>'
+            f"<td>{html.escape(proposed)}</td>"
+            f"<td>{_badge(decision)}</td>"
+            f"<td>{html.escape(overall)}</td>"
+            f"<td>{html.escape(marker_text)}</td>"
+            f"<td>{html.escape('; '.join(map(str, uncertainties[:2])) or '—')}</td>"
+            f"<td>{html.escape(action)}</td>"
+            "</tr>"
+        )
+    return f"""
+    <section id="review-priorities" class="audit-section review-priority-section">
+      <div class="section-header">
+        <h2>Review priorities</h2>
+        <span class="muted">Cluster-level routing for human review</span>
+      </div>
+      <div class="table-wrap">
+        <table class="audit-table review-table">
+          <thead><tr><th>Cluster</th><th>Label</th><th>Decision</th><th>Confidence</th><th>Top markers</th><th>Uncertainty</th><th>Next action</th></tr></thead>
+          <tbody>{''.join(rows)}</tbody>
+        </table>
+      </div>
+    </section>
+    """
+
+
+def _top_marker_text(markers: list[Any], limit: int = 4) -> str:
+    marker_dicts = _marker_dicts(markers)
+    genes = [str(marker.get("gene") or "") for marker in marker_dicts if marker.get("gene")]
+    return ", ".join(genes[:limit]) if genes else "—"
+
+
+def _review_action(card: dict[str, Any]) -> str:
+    decision = str(card.get("decision") or "")
+    if decision == "Accepted":
+        return "Confirm or finalize"
+    if decision == "Ambiguous":
+        return "Compare provider reports"
+    if decision == "Artifact warning":
+        return "Inspect QC and cluster composition"
+    if decision == "Unknown":
+        return "Check marker evidence"
+    return "Review label and supporting evidence"
+
+
+def _artifact_navigation_section(report_dir: Path, provider_index: dict[str, Any], provider_index_path: Path | None) -> str:
+    output_dir = provider_index_path.parent.parent if provider_index_path else report_dir.parent
+    links = [
+        ("Review table", "review.html", "Editable browser table for human decisions."),
+    ]
+    if provider_index_path:
+        links.append(("Provider index", _relative_report_link(report_dir, provider_index_path), "Machine-readable list of focused reports."))
+    providers = provider_index.get("providers") if isinstance(provider_index, dict) else []
+    if isinstance(providers, list):
+        for provider in providers:
+            if not isinstance(provider, dict):
+                continue
+            html_target = str(provider.get("html") or "")
+            if html_target:
+                links.append((str(provider.get("name") or provider.get("id")), _relative_report_link(report_dir, output_dir / html_target), str(provider.get("purpose") or "")))
+    items = "".join(
+        f'<li><a href="{html.escape(href)}">{html.escape(label)}</a><span>{html.escape(desc)}</span></li>'
+        for label, href, desc in links
+    )
+    return f"""
+    <section id="artifacts" class="audit-section artifact-section">
+      <div class="section-header">
+        <h2>Artifacts and detail pages</h2>
+        <span class="muted">Open focused evidence pages when needed</span>
+      </div>
+      <ul class="artifact-list">{items}</ul>
+    </section>
+    """
+
+
 def _relative_report_link(report_dir: Path, target: Path) -> str:
     return os.path.relpath(target, report_dir)
 
@@ -244,7 +513,7 @@ def _umap_section(cards: list[dict[str, Any]], diagnosis: dict[str, Any]) -> str
     subtitle = "Interactive · hover for details" + ("" if has_real else " · placeholder layout")
     plotly_html = _umap_plotly(cards, umap_coords)
     return f"""
-    <section class="umap-section">
+    <section id="cluster-overview" class="umap-section audit-section">
       <div class="section-header">
         <h2>Cluster overview</h2>
         <span class="muted">{subtitle}</span>
@@ -445,37 +714,18 @@ def _evidence_stack_section(cards: list[dict[str, Any]]) -> str:
         {
             "layer": "Marker-based evidence",
             "purpose": "Biological interpretability",
-            "tools": "Scanpy rank_genes_groups; built-in marker DB; built-in marker signature scoring",
-            "outputs": "DE markers, log2FC, padj, signature coverage/overlap, marker-set overlap",
+            "tools": "Scanpy rank_genes_groups; built-in marker signature scoring",
+            "outputs": "DE markers, log2FC, padj, signature coverage/overlap",
             "authority": "Can support labels and confidence",
             "available": any(card.get("evidence", {}).get("markers") for card in cards),
         },
         {
-            "layer": "Reference-based mapping",
-            "purpose": "Biological grounding",
-            "tools": "Local/reference h5ad matching; public reference registry",
-            "outputs": "Reference labels, Jaccard, shared genes, reference metadata",
-            "authority": "Can support labels and expose disagreement",
-            "available": any(
-                any(isinstance(ref, dict) and ref.get("ref_id") != "builtin" for ref in card.get("evidence", {}).get("references", []))
-                for card in cards
-            ),
-        },
-        {
-            "layer": "Model-based prediction",
-            "purpose": "Statistical inference",
-            "tools": "CellTypist; future scVI/scANVI adapters",
-            "outputs": "Predicted labels, probabilities, cluster-level votes",
-            "authority": "Can support labels but is not directly comparable to reference scores",
-            "available": any(card.get("evidence", {}).get("models") for card in cards),
-        },
-        {
-            "layer": "Ontology reasoning",
-            "purpose": "Hierarchical consistency",
-            "tools": "Planned Cell Ontology layer",
-            "outputs": "Lineage/subtype hierarchy, synonym normalization, conflict checks",
-            "authority": "Planned consistency check, not yet active",
-            "available": any(card.get("evidence", {}).get("ontology") for card in cards),
+            "layer": "Marker database evidence",
+            "purpose": "Curated and user-defined marker support",
+            "tools": "Built-in marker DB; CellMarker; PanglaoDB; user marker CSV/TSV",
+            "outputs": "Marker-set overlaps, matched genes, coverage/Jaccard scores, confidence buckets",
+            "authority": "Can support labels and expose database disagreement",
+            "available": any(card.get("evidence", {}).get("references") for card in cards),
         },
         {
             "layer": "LLM explanation",
@@ -499,8 +749,8 @@ def _evidence_stack_section(cards: list[dict[str, Any]]) -> str:
 
 
 def _evidence_stack_row(row: dict[str, Any]) -> str:
-    status = "Active" if row["available"] else "Missing" if row["layer"] != "Ontology reasoning" else "Planned"
-    status_class = "is-active" if row["available"] else "is-planned" if row["layer"] == "Ontology reasoning" else "is-missing"
+    status = "Active" if row["available"] else "Missing"
+    status_class = "is-active" if row["available"] else "is-missing"
     return (
         f'<article class="evidence-stack-card">'
         f'<div class="stack-card-head">'
@@ -524,10 +774,10 @@ def _evidence_completeness_section(cards: list[dict[str, Any]]) -> str:
     rows = [_evidence_completeness_row(card) for card in cards]
     if not rows:
         return ""
-    source_keys = ["markers", "marker_db", "model", "reference", "qc", "llm"]
+    source_keys = ["markers", "marker_db", "qc", "llm"]
     complete_count = sum(1 for row in rows if all(row["sources"][key] for key in source_keys))
     meta = f"{complete_count}/{len(rows)} clusters have all evidence sources"
-    header = "".join(f"<th>{html.escape(label)}</th>" for label in ["Cluster", "Markers", "Marker DB", "Model", "Reference", "QC", "LLM"])
+    header = "".join(f"<th>{html.escape(label)}</th>" for label in ["Cluster", "Markers", "Marker DB", "QC", "LLM"])
     body = "".join(_evidence_completeness_html(row) for row in rows)
     return f"""
     <section class="evidence-completeness">
@@ -552,8 +802,6 @@ def _evidence_completeness_row(card: dict[str, Any]) -> dict[str, Any]:
     sources = {
         "markers": bool(evidence.get("markers")),
         "marker_db": any(isinstance(ref, dict) and ref.get("ref_id") == "builtin" for ref in references),
-        "model": bool(evidence.get("models")),
-        "reference": any(isinstance(ref, dict) and ref.get("ref_id") != "builtin" for ref in references),
         "qc": bool(evidence.get("qc") or evidence.get("qc_warnings")),
         "llm": reasoning.get("summary_source") == "llm",
     }
@@ -567,7 +815,7 @@ def _evidence_completeness_row(card: dict[str, Any]) -> dict[str, Any]:
 def _evidence_completeness_html(row: dict[str, Any]) -> str:
     cluster_id = str(row["cluster_id"])
     sources = row["sources"]
-    cells = "".join(_completeness_cell(bool(sources[key])) for key in ["markers", "marker_db", "model", "reference", "qc", "llm"])
+    cells = "".join(_completeness_cell(bool(sources[key])) for key in ["markers", "marker_db", "qc", "llm"])
     return (
         f"<tr>"
         f'<th><a href="#cluster-{html.escape(cluster_id)}">Cluster {html.escape(cluster_id)}</a></th>'
@@ -1071,9 +1319,6 @@ def _cluster_evidence_stack(
 ) -> str:
     layers = [
         _marker_evidence_layer(markers, marker_signatures, references),
-        _reference_evidence_layer(references),
-        _model_evidence_layer(models),
-        _ontology_evidence_layer(),
         _llm_evidence_layer(reasoning),
         _qc_evidence_layer(qc_metrics, composition, qc_warnings),
     ]
@@ -1131,7 +1376,7 @@ def _marker_evidence_layer(markers: list[Any], marker_signatures: list[Any], ref
     return _evidence_layer(
         "Marker-based evidence",
         "Biological interpretability",
-        "Scanpy rank_genes_groups; built-in marker DB",
+        "Scanpy rank_genes_groups; built-in marker signatures",
         rows or [("Status", "No marker evidence available for this cluster.")],
         status="Active" if rows else "Missing",
     )
@@ -1195,52 +1440,6 @@ def _marker_strength_label(marker: dict[str, Any]) -> str:
     if log2fc > 0.5 and (pval is None or pval < 0.05):
         return "moderate"
     return "weak"
-
-
-def _reference_evidence_layer(references: list[Any]) -> str:
-    external = [r for r in references if isinstance(r, dict) and r.get("ref_id") != "builtin"]
-    rows = []
-    for r in external:
-        ref_id = str(r.get("ref_id") or r.get("reference") or r.get("name") or "ref")
-        lbl = str(r.get("label") or "")
-        j = r.get("jaccard") or r.get("similarity")
-        j_str = f" (J={j:.2f})" if isinstance(j, (int, float)) else ""
-        rows.append((ref_id, f"{lbl}{j_str}"))
-    return _evidence_layer(
-        "Reference-based mapping",
-        "Biological grounding",
-        "Local/reference h5ad matching; public reference registry",
-        rows or [("Status", "No external reference match available for this cluster.")],
-        status="Active" if rows else "Missing",
-    )
-
-
-def _model_evidence_layer(models: list[Any]) -> str:
-    rows = []
-    for m in models:
-        if isinstance(m, dict):
-            name = str(m.get("model") or m.get("name") or "model")
-            lbl = str(m.get("label") or "")
-            prob = m.get("probability") or m.get("score")
-            prob_str = f" ({prob:.0%})" if isinstance(prob, (int, float)) else ""
-            rows.append((name, f"{lbl}{prob_str}"))
-    return _evidence_layer(
-        "Model-based prediction",
-        "Statistical inference",
-        "CellTypist; future scVI/scANVI adapters",
-        rows or [("Status", "No model prediction available for this cluster.")],
-        status="Active" if rows else "Missing",
-    )
-
-
-def _ontology_evidence_layer() -> str:
-    return _evidence_layer(
-        "Ontology reasoning",
-        "Hierarchical consistency",
-        "Planned Cell Ontology layer",
-        [("Status", "Not active yet; planned for lineage/subtype consistency checks.")],
-        status="Planned",
-    )
 
 
 def _llm_evidence_layer(reasoning: dict[str, Any]) -> str:
@@ -1448,7 +1647,7 @@ def _methods_section(diagnosis: dict[str, Any]) -> str:
         var_html += ", …"
 
     return f"""
-    <details class="methods-section">
+    <details class="methods-section" id="methods">
       <summary>Methods &amp; Reproducibility</summary>
       <div class="methods-body">
         <h3>Dataset</h3>
@@ -1678,6 +1877,185 @@ _CSS = """
   .section-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
   .muted { color: var(--muted); font-size: 13px; }
   code { background: #eef2f9; padding: 2px 5px; border-radius: 4px; font-size: 12px; font-family: "SF Mono", "Fira Code", monospace; }
+
+  .report-toc {
+    position: sticky;
+    top: 56px;
+    z-index: 10;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin: -8px 0 16px;
+    padding: 8px 0;
+    background: rgba(242, 245, 251, 0.94);
+    backdrop-filter: blur(6px);
+  }
+  .report-toc a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--navy);
+    font-size: 12px;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  .report-toc a:hover { color: var(--blue); border-color: #b9c7dc; }
+  .audit-hero {
+    box-shadow: none;
+    border-radius: 8px;
+  }
+  .audit-section {
+    border-radius: 8px;
+    box-shadow: none;
+  }
+  .overview-table th { width: 150px; }
+  .compact-metrics .metric {
+    box-shadow: none;
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .compact-metrics .metric strong { font-size: 24px; }
+  .workflow-steps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+  }
+  .workflow-step {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fbfcff;
+  }
+  .workflow-step.is-muted { opacity: 0.68; }
+  .workflow-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    background: var(--navy);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 800;
+  }
+  .workflow-step.is-muted .workflow-number { background: #9aa7b8; }
+  .workflow-step h3 {
+    margin: 0 0 3px;
+    color: var(--navy);
+    font-size: 13px;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .workflow-step p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .workflow-step span:not(.workflow-number) {
+    display: inline-block;
+    margin-top: 6px;
+    color: var(--teal);
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .workflow-step.is-muted span:not(.workflow-number) { color: var(--muted); }
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .audit-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    background: #fff;
+  }
+  .audit-table th,
+  .audit-table td {
+    padding: 9px 10px;
+    border-bottom: 1px solid #e7edf5;
+    vertical-align: top;
+    text-align: left;
+  }
+  .audit-table tbody tr:last-child td { border-bottom: 0; }
+  .audit-table th {
+    background: #f6f8fc;
+    color: var(--navy);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+  .status-success { color: var(--green); border-color: #b9dfc8; background: #f1fbf5; }
+  .status-warning { color: var(--orange); border-color: #f1d0ad; background: #fff8ef; }
+  .status-skipped,
+  .status-missing { color: var(--muted); background: #f7f9fc; }
+  .agreement-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+  .agreement-high { color: var(--green); background: #e3f5ec; }
+  .agreement-lineage { color: var(--blue); background: #eef4ff; }
+  .agreement-mixed { color: var(--orange); background: #fff3e0; }
+  .agreement-insufficient { color: var(--muted); background: #eef0f4; }
+  .cross-provider-table td:nth-child(2),
+  .cross-provider-table td:nth-child(3),
+  .cross-provider-table td:nth-child(4),
+  .cross-provider-table td:nth-child(5) {
+    min-width: 150px;
+  }
+  .artifact-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px;
+    padding: 0;
+    margin: 0;
+    list-style: none;
+  }
+  .artifact-list li {
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fbfcff;
+  }
+  .artifact-list a {
+    display: block;
+    font-weight: 800;
+    text-decoration: none;
+  }
+  .artifact-list span {
+    display: block;
+    margin-top: 3px;
+    color: var(--muted);
+    font-size: 12px;
+  }
 
   /* ── Metrics ── */
   .metrics-grid {

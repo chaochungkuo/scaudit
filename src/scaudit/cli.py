@@ -176,27 +176,16 @@ def _print_debug_card(card: dict) -> None:
             )
     print_status_table("Top markers", marker_rows or [("none", "SKIPPED", "no marker evidence")])
 
-    model_rows = [
+    marker_db_rows = [
         (
-            str(model.get("model") or model.get("name") or "model"),
-            str(model.get("label") or ""),
-            f"probability {model.get('probability', model.get('score', ''))}",
-        )
-        for model in evidence.get("models") or []
-        if isinstance(model, dict)
-    ]
-    print_status_table("Model evidence", model_rows or [("none", "SKIPPED", "no model evidence")])
-
-    reference_rows = [
-        (
-            str(ref.get("ref_id") or ref.get("reference") or "reference"),
+            str(ref.get("ref_id") or ref.get("source") or "marker_db"),
             str(ref.get("label") or ""),
             f"Jaccard {ref.get('jaccard', ref.get('similarity', ''))}, shared {ref.get('n_shared', '')}",
         )
         for ref in evidence.get("references") or []
         if isinstance(ref, dict)
     ]
-    print_status_table("Reference evidence", reference_rows or [("none", "SKIPPED", "no reference evidence")])
+    print_status_table("Marker database evidence", marker_db_rows or [("none", "SKIPPED", "no marker database evidence")])
 
     qc_rows = []
     qc_metrics = evidence.get("qc") or {}
@@ -450,10 +439,10 @@ def run(args: Sequence[str]) -> None:
     print("[2/4] Preparing outputs      RUNNING")
     outputs = prepare_run(config_path)
     print("[2/4] Preparing outputs      OK")
-    print("[3/4] Writing placeholders   OK")
+    print("[3/4] Writing evidence       OK")
     print("[4/4] Final summary          OK")
     print()
-    print("Draft annotation audit skeleton complete")
+    print("Annotation audit complete")
     print()
     print("Outputs:")
     print(f"  Report: {outputs.report_index}")
@@ -464,7 +453,7 @@ def run(args: Sequence[str]) -> None:
     print()
     print("Next:")
     print(f"  Open {outputs.report_index}")
-    print("  Implement marker evidence in the next milestone")
+    print(f"  Review {outputs.review_table}")
 
 
 def finalize(args: Sequence[str]) -> None:
@@ -740,11 +729,6 @@ def _print_help() -> None:
     print("  scaudit plan config.toml")
     print("  scaudit run config.toml")
     print("  scaudit review import results/review_table.csv --run results/")
-    print("  scaudit reference search --species mouse --tissue heart")
-    print("  scaudit reference recommend --config config.toml [--write]")
-    print("  scaudit reference add my_ref.h5ad --id my_ref --species mouse --tissue heart --label-key cell_type")
-    print("  scaudit reference list")
-    print("  scaudit reference use my_ref --config config.toml")
     print("  scaudit finalize results/ --out finalized/ [--write-h5ad]")
     print()
     print("Commands:")
@@ -755,9 +739,8 @@ def _print_help() -> None:
     print("  finalize     Freeze a draft run and optionally write annotated.h5ad")
     print("  init-config  Create a starter config.toml")
     print("  plan         Preview the run plan")
-    print("  reference    Manage local reference registry")
     print("  review       Import human review tables")
-    print("  run          Create draft audit output skeleton")
+    print("  run          Create marker-based audit outputs")
     print("  validate     Validate config.toml")
     print("  version      Show scaudit version")
 

@@ -2,7 +2,7 @@
 
 ## Goal
 
-scaudit should produce reports that are readable for biologists and auditable by experienced bioinformaticians. The main report gives a bird's-eye view across all evidence layers, while focused provider reports expose one method, tool, or database family at a time.
+scaudit should produce reports that are readable for biologists and auditable by experienced bioinformaticians. The main report gives a bird's-eye view across marker-based evidence layers, while focused provider reports expose one marker method or database family at a time.
 
 The report system should avoid a black-box workflow without making the primary report too long.
 
@@ -14,26 +14,10 @@ results/
     report.html
   evidence_reports/
     provider_reports.json
-    comparison/
-      evidence_comparison.qmd
-      evidence_comparison.html
-      evidence_comparison.json
     marker_based/
       marker_based.qmd
       marker_based.html
       marker_based.evidence.json
-    sctype/
-      sctype.qmd
-      sctype.html
-      sctype.evidence.json
-    sccatch/
-      sccatch.qmd
-      sccatch.html
-      sccatch.evidence.json
-    scsa/
-      scsa.qmd
-      scsa.html
-      scsa.evidence.json
     cellmarker/
       cellmarker.qmd
       cellmarker.html
@@ -42,6 +26,10 @@ results/
       panglaodb.qmd
       panglaodb.html
       panglaodb.evidence.json
+    user_markers/
+      user_markers.qmd
+      user_markers.html
+      user_markers.evidence.json
 ```
 
 The main report should summarize status, top findings, agreement or disagreement, and links to provider reports. It should not combine all tool details into one long page.
@@ -51,13 +39,15 @@ Each provider report should answer one focused question:
 | Provider report | Focus |
 | --- | --- |
 | Marker-based evidence | Differential markers, marker strength, marker signatures, marker expression figures |
-| ScType annotation evidence | Marker-set scoring with explicit marker database and tissue/cell-type scope |
-| scCATCH annotation evidence | Tissue-aware marker matching with explicit R package/database provenance |
-| SCSA annotation evidence | External marker-scoring tool results with command/function parameters |
 | CellMarker evidence | Curated CellMarker database support for cluster marker interpretation |
 | PanglaoDB evidence | Curated PanglaoDB marker support for cluster marker interpretation |
+| User marker evidence | User-supplied marker support for project-specific cluster interpretation |
 
 Provider dependencies are managed through pixi environments and documented in [`provider-dependency-management.md`](provider-dependency-management.md). Each provider should record the pixi environment, package or database version, command/function, parameters, and skipped/warning state in its standard JSON.
+
+External tool provider reports such as ScType, scCATCH, and SCSA are out of scope for the marker-based final check. If they are revisited later, they must execute the official package, script, or CLI they name and must not substitute an internal scorer with tool-like weights.
+
+Marker database providers may use scaudit's shared overlap engine, because the provider target is the database rather than an external annotation tool. They must record database path, source URL, publication, row/signature counts, checksum, species/tissue filters, and normalized `cluster_label_evidence.csv`.
 
 ## QMD Metadata Convention
 
@@ -299,4 +289,4 @@ Initial outputs:
 - `marker_based.evidence.json`.
 - Links from the main report to the marker provider report.
 
-After the marker provider pattern is stable, the same contract can be extended to reference mapping, CellTypist model prediction, ontology reasoning, and LLM explanation.
+After the marker provider pattern is stable, the same contract can be extended to additional marker database providers and explain-only LLM reporting.

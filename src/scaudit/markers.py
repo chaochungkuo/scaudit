@@ -8,7 +8,7 @@ from typing import Any
 
 # Curated marker gene sets for common cell types.
 # Format: {cell_type: [gene, ...]}  — symbols, human unless noted.
-# Used as a lightweight label-proposal fallback when CellTypist is unavailable.
+# Used as a lightweight label-proposal fallback for marker-based reports.
 
 MARKER_DB: dict[str, list[str]] = {
     # ── Immune ──────────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -32,18 +33,20 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def relative_to(path: Path, root: Path) -> str:
     try:
-        return str(path.relative_to(root))
+        return str(path.resolve().relative_to(root.resolve()))
     except ValueError:
         return str(path)
 
 
 def render_qmd(qmd_path: Path) -> tuple[Path | None, str]:
+    qmd_path = qmd_path.resolve()
     quarto = shutil.which("quarto")
     if not quarto:
         return None, "Quarto was not available; wrote a fallback HTML provider report."
     source_dir = str(Path(__file__).resolve().parents[2])
     env = dict(os.environ)
     env["PYTHONPATH"] = source_dir + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    env.setdefault("QUARTO_PYTHON", sys.executable)
     try:
         completed = subprocess.run(
             [quarto, "render", str(qmd_path), "--to", "html"],
